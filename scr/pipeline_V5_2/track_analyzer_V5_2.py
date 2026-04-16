@@ -1,15 +1,36 @@
 # ==========================================
-# 파일명: track_analyzer_V5_1.py
+# 파일명: track_analyzer_V5_2.py
 # 설명:
 # 공통 추적 분석기
 # - track history 관리
 # - 차량 속도 계산
 # - 궤적 기반 차선 추정
 # - 상태/사고 로직이 공통 사용
+#
+# [이번 궤적 기반 차선 추정 수정 핵심]
+# 기존:
+#   최근 5프레임 동일 raw lane -> stable lane 확정
+#
+# 변경:
+#   1) raw lane 최근 50프레임 누적
+#   2) 최근 50프레임에서 가장 많이 나온 차선(majority lane) 계산
+#   3) 현재 시점에서 같은 raw lane이 몇 프레임 연속인지(streak) 계산
+#   4) stable 확정 전:
+#        majority lane == streak lane
+#        AND streak_len >= 8
+#        AND majority_ratio >= 0.40
+#        이면 stable lane 확정
+#   5) stable 확정 후 freeze 중:
+#        raw lane 흔들려도 stable 유지
+#   6) freeze 종료 후:
+#        다른 차선이 12프레임 연속
+#        AND 최근 50프레임 majority도 그 차선
+#        AND majority_ratio >= 0.40
+#        이면 재배정
 # ==========================================
 
 import numpy as np
-from collections import defaultdict, deque
+from collections import defaultdict, deque, Counter
 
 
 class TrackAnalyzer:
@@ -31,8 +52,21 @@ class TrackAnalyzer:
         self.current_lane_raw = {}       # tid -> raw nearest lane id
         self.current_lane_stable = {}    # tid -> confirmed lane id
 
-        self.lane_vote_history = defaultdict(lambda: deque(maxlen=5))
-        self.lane_change_memory = defaultdict(lambda: deque(maxlen=10))
+        # [변경]
+        # 과거 recent N표 동일 확인용 deque 제거
+        # -> 최근 50프레임 raw lane 저장용으로 교체
+        self.lane_raw_history = defaultdict(lambda: deque(maxlen=self.LANE_HISTORY_SIZE))   # tid -> 최근 50 raw lane
+        self.lane_change_memory = defaultdict(lambda: deque(maxlen=10))  # tid -> stable lane 변경 이력
+
+        # [추가]
+        # raw lane 연속 streak 관리
+        self.lane_last_raw = {}          # tid -> 직전 raw lane
+        self.lane_same_streak = {}       # tid -> 동일 raw lane 연속 길이
+
+        # [추가]
+        # stable lane freeze 관리
+        self.lane_freeze_until = {}      # tid -> 이 frame_id까지 freeze 유지
+        self.lane_stable_since = {}      # tid -> stable lane 확정/재배정된 시점
 
         # -----------------------------
         # 디버그 정보
@@ -46,6 +80,7 @@ class TrackAnalyzer:
             "centerlines": [],
             "speeds": {},
             "boxes": {},
+            "lane_debug": {},   # tid별 majority/streak/freeze 디버그
         }
 
         # -----------------------------
@@ -57,7 +92,6 @@ class TrackAnalyzer:
 
         self.MAX_HISTORY = 60
         self.FIT_MIN_POINTS = 30
-        self.LANE_CONFIRM_FRAMES = 5
         self.MIN_TOTAL_MOTION = 35
         self.MAX_DY_JUMP = 40
         self.MAX_DX_JUMP = 60
@@ -67,6 +101,16 @@ class TrackAnalyzer:
 
         self.LINEAR_CLUSTER_THR = 0.085
         self.QUAD_CLUSTER_THR = 0.12
+
+        # -----------------------------
+        # 차선 안정화 파라미터
+        # -----------------------------
+        self.LANE_HISTORY_SIZE = 50          # 최근 raw lane 관찰 창
+        self.LANE_MIN_SAMPLES = 20            # stable 판정 최소 표본 수
+        self.LANE_CONFIRM_STREAK = 8          # 최초 stable 확정용 연속 프레임 수
+        self.LANE_REASSIGN_STREAK = 12        # 재배정용 연속 프레임 수
+        self.LANE_MAJORITY_RATIO = 0.40       # 최근 history 내 다수결 최소 비율
+        self.LANE_FREEZE_FRAMES = 100         # stable lane 확정 후 freeze 프레임
 
     # =========================================================
     # 기본 유틸
@@ -410,28 +454,146 @@ class TrackAnalyzer:
 
         return best_lane
 
-    def _update_lane_confirmation(self, tid, raw_lane):
-        self.lane_vote_history[tid].append(raw_lane)
+    # =========================================================
+    # 7-1) 최근 raw lane history의 다수결 계산
+    # =========================================================
+    def _get_lane_majority_info(self, tid):
+        """
+        최근 100프레임 raw lane history에서
+        - 가장 많이 나온 차선번호(majority_lane)
+        - 등장 횟수(majority_count)
+        - 비율(majority_ratio)
+        를 계산한다.
 
-        if len(self.lane_vote_history[tid]) < self.LANE_CONFIRM_FRAMES:
+        None은 차선 미할당 상태이므로 다수결 계산에서 제외한다.
+        """
+        history = self.lane_raw_history[tid]
+        valid_lanes = [v for v in history if v is not None]
+
+        if len(valid_lanes) == 0:
+            return None, 0, 0.0, 0
+
+        counter = Counter(valid_lanes)
+        majority_lane, majority_count = counter.most_common(1)[0]
+        total_valid = len(valid_lanes)
+        majority_ratio = majority_count / max(total_valid, 1)
+
+        return majority_lane, majority_count, majority_ratio, total_valid
+
+    # =========================================================
+    # 7-2) raw lane streak 업데이트
+    # =========================================================
+    def _update_lane_streak(self, tid, raw_lane):
+        """
+        raw lane이 직전 프레임과 같으면 streak 증가,
+        다르면 streak를 1로 리셋한다.
+
+        예:
+            raw: 1,1,1,1 -> streak = 4
+            다음 프레임 raw=2 -> streak = 1 (lane 2 시작)
+        """
+        prev_raw = self.lane_last_raw.get(tid, None)
+
+        if raw_lane == prev_raw:
+            self.lane_same_streak[tid] = self.lane_same_streak.get(tid, 0) + 1
+        else:
+            self.lane_same_streak[tid] = 1
+            self.lane_last_raw[tid] = raw_lane
+
+        return self.lane_same_streak[tid]
+
+    # =========================================================
+    # 7-3) stable lane 확정 / freeze / 재배정
+    # =========================================================
+    def _update_lane_confirmation(self, tid, raw_lane, frame_id):
+        """
+        [최종 규칙]
+
+        1) stable lane이 아직 없을 때
+           - 최근 raw lane history(최대 100프레임)
+           - majority_lane 계산
+           - 현재 raw lane streak 계산
+           - 아래 조건을 모두 만족하면 stable lane 확정
+             a. 유효 표본 수 >= LANE_MIN_SAMPLES
+             b. majority_ratio >= LANE_MAJORITY_RATIO
+             c. raw lane이 8프레임 이상 연속
+             d. majority_lane == 현재 streak lane(raw_lane)
+
+        2) stable lane이 이미 있을 때
+           - freeze 중이면 무조건 stable lane 유지
+           - freeze 종료 후
+             다른 raw lane이 12프레임 이상 연속
+             AND 최근 history majority도 그 lane
+             AND majority_ratio도 충분
+             이면 재배정
+        """
+        # 최근 raw lane history 누적
+        self.lane_raw_history[tid].append(raw_lane)
+
+        # 현재 raw lane streak 계산
+        streak_len = self._update_lane_streak(tid, raw_lane)
+
+        # 최근 history 다수결 계산
+        majority_lane, majority_count, majority_ratio, total_valid = self._get_lane_majority_info(tid)
+
+        current_stable = self.current_lane_stable.get(tid, None)
+        freeze_until = self.lane_freeze_until.get(tid, -1)
+
+        # -----------------------------------------------------
+        # A) stable lane이 아직 없을 때 -> 최초 확정
+        # -----------------------------------------------------
+        if current_stable is None:
+            can_confirm = (
+                raw_lane is not None and
+                total_valid >= self.LANE_MIN_SAMPLES and
+                majority_lane is not None and
+                majority_ratio >= self.LANE_MAJORITY_RATIO and
+                streak_len >= self.LANE_CONFIRM_STREAK and
+                majority_lane == raw_lane
+            )
+
+            if can_confirm:
+                self.current_lane_stable[tid] = majority_lane
+                self.lane_stable_since[tid] = frame_id
+                self.lane_freeze_until[tid] = frame_id + self.LANE_FREEZE_FRAMES
+                self.lane_change_memory[tid].append(majority_lane)
+
             return self.current_lane_stable.get(tid, None)
 
-        last_votes = list(self.lane_vote_history[tid])
+        # -----------------------------------------------------
+        # B) stable lane이 이미 있을 때
+        # -----------------------------------------------------
 
-        if all(v == last_votes[0] and v is not None for v in last_votes):
-            new_lane = last_votes[0]
-            self.current_lane_stable[tid] = new_lane
-            self.lane_change_memory[tid].append(new_lane)
-            return new_lane
+        # B-1) freeze 중이면 lane 유지
+        if frame_id <= freeze_until:
+            return current_stable
+
+        # B-2) freeze 종료 후 -> 강한 조건일 때만 재배정
+        can_reassign = (
+            raw_lane is not None and
+            raw_lane != current_stable and
+            total_valid >= self.LANE_MIN_SAMPLES and
+            majority_lane is not None and
+            majority_ratio >= self.LANE_MAJORITY_RATIO and
+            streak_len >= self.LANE_REASSIGN_STREAK and
+            majority_lane == raw_lane
+        )
+
+        if can_reassign:
+            self.current_lane_stable[tid] = raw_lane
+            self.lane_stable_since[tid] = frame_id
+            self.lane_freeze_until[tid] = frame_id + self.LANE_FREEZE_FRAMES
+            self.lane_change_memory[tid].append(raw_lane)
 
         return self.current_lane_stable.get(tid, None)
 
     # =========================================================
     # 8) 차선 추정 전체 갱신
     # =========================================================
-    def _update_lane_estimation(self, tracks):
+    def _update_lane_estimation(self, frame_id, tracks):
         stable_models = []
 
+        # 1) 안정적으로 움직인 차량만 궤적 모델 생성
         for t in tracks:
             tid = t["id"]
             pts = self.track_history.get(tid, [])
@@ -450,10 +612,13 @@ class TrackAnalyzer:
             self.track_fit_error[tid] = rmse
             stable_models.append((tid, model))
 
+        # 2) 모든 안정 궤적을 군집화해서 centerline 생성
         self.centerlines = self._cluster_track_models(stable_models)
 
+        # 3) 각 track에 raw lane 할당 후 stable lane 업데이트
         lane_map = {}
         raw_lane_map = {}
+        lane_debug = {}
 
         for t in tracks:
             tid = t["id"]
@@ -462,17 +627,35 @@ class TrackAnalyzer:
             if len(pts) == 0:
                 lane_map[tid] = None
                 raw_lane_map[tid] = None
+                lane_debug[tid] = {}
                 continue
 
             current_point = pts[-1]
+
+            # 현재 프레임 raw lane 추정
             raw_lane = self._assign_lane_raw(current_point)
             self.current_lane_raw[tid] = raw_lane
             raw_lane_map[tid] = raw_lane
 
-            stable_lane = self._update_lane_confirmation(tid, raw_lane)
+            # stable lane 확정 / freeze / 재배정
+            stable_lane = self._update_lane_confirmation(tid, raw_lane, frame_id)
             lane_map[tid] = stable_lane
 
-        return lane_map, raw_lane_map
+            # 디버그 정보 저장
+            majority_lane, majority_count, majority_ratio, total_valid = self._get_lane_majority_info(tid)
+            lane_debug[tid] = {
+                "raw_lane": raw_lane,
+                "stable_lane": stable_lane,
+                "majority_lane": majority_lane,
+                "majority_count": majority_count,
+                "majority_ratio": round(majority_ratio, 3),
+                "total_valid_samples": total_valid,
+                "streak_len": self.lane_same_streak.get(tid, 0),
+                "freeze_until": self.lane_freeze_until.get(tid, -1),
+                "stable_since": self.lane_stable_since.get(tid, None),
+            }
+
+        return lane_map, raw_lane_map, lane_debug
 
     # =========================================================
     # 외부 호출 메인 함수
@@ -497,7 +680,7 @@ class TrackAnalyzer:
         boxes, speeds, avg_speed = self._update_tracks_and_speeds(tracks)
 
         # 3) lane estimation
-        lane_map, raw_lane_map = self._update_lane_estimation(tracks)
+        lane_map, raw_lane_map, lane_debug = self._update_lane_estimation(frame_id, tracks)
 
         # 4) 결과 정리
         analysis = {
@@ -510,6 +693,7 @@ class TrackAnalyzer:
             "raw_lane_map": raw_lane_map,
             "lane_count": len(self.centerlines),
             "centerlines": self.centerlines,
+            "lane_debug": lane_debug,
         }
 
         self.last_debug = analysis

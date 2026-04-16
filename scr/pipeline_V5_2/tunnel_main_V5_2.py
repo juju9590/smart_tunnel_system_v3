@@ -30,8 +30,8 @@ PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, "..", ".."))
 # ==========================
 # 외부 경로 (대용량 파일 분리)
 # ==========================
-DATA_ROOT = "E:/Finalpj_tunnel_V3/smart_tunnel_V3_data"
-OUTPUT_ROOT = "E:/Finalpj_tunnel_V3/smart_tunnel_V3_outputs"
+DATA_ROOT = "d:/Finalpj_tunnel_V3/smart_tunnel_V3_data"
+OUTPUT_ROOT = "d:/Finalpj_tunnel_V3/smart_tunnel_V3_outputs"
 
 # ==========================
 # 입력 영상 경로

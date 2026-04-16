@@ -8,7 +8,7 @@
 # - 최종 결과 dict 반환
 # ==========================================
 
-from track_analyzer_V5_1 import TrackAnalyzer
+from track_analyzer_V5_2 import TrackAnalyzer
 from traffic_state_V5_1 import TrafficState
 from traffic_accident_V5_2_3 import AccidentDetector
 
