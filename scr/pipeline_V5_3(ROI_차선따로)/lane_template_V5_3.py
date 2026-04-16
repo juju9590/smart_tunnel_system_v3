@@ -1,7 +1,7 @@
 # ==========================================
-# 파일명: lane_template_V5_2_2.py
+# 파일명: lane_template_V5_3.py
 # 설명:
-# 2차 군집화 기반 차선(군집) 추정 모듈
+# V5_3 2차 군집화 기반 차선(군집) 추정 모듈
 #
 # [목적]
 # - 1차 군집화만으로는 비슷한 흐름이 잘게 쪼개질 수 있음
@@ -163,7 +163,7 @@ class LaneTemplateEstimator:
         a, b = model["coef"]
         return np.array([a, b / max(frame_height, 1)], dtype=np.float32)
 
-    def _model_distance(self, model1, model2, roi_y1, roi_y2, frame_height):
+    def _model_distance(self, model1, model2, lane_y1, lane_y2, frame_height):
         """
         두 선형 궤적이 얼마나 비슷한지 계산
         - 계수 벡터 거리
@@ -173,7 +173,7 @@ class LaneTemplateEstimator:
         v2 = self._coef_vector(model2, frame_height)
         coef_dist = float(np.linalg.norm(v1 - v2))
 
-        sample_ys = np.linspace(roi_y1, roi_y2, 5)
+        sample_ys = np.linspace(lane_y1, lane_y2, 5)
         diffs = []
 
         for y in sample_ys:
@@ -227,7 +227,7 @@ class LaneTemplateEstimator:
     # 6) 1차 군집화
     #    차량 궤적끼리 군집화
     # =========================================================
-    def _cluster_track_models_stage1(self, roi_y1, roi_y2, frame_height):
+    def _cluster_track_models_stage1(self, lane_y1, lane_y2, frame_height):
         stable_models = [
             (tid, self.track_models[tid])
             for tid in sorted(self.collected_track_ids)
@@ -246,8 +246,8 @@ class LaneTemplateEstimator:
                 dist = self._model_distance(
                     model,
                     cluster["rep_model"],
-                    roi_y1,
-                    roi_y2,
+                    lane_y1,
+                    lane_y2,
                     frame_height
                 )
 
@@ -271,11 +271,11 @@ class LaneTemplateEstimator:
     # =========================================================
     # 7) 1차 군집 정보 정리
     # =========================================================
-    def _extract_cluster_info_stage1(self, clusters, roi_y1, roi_y2):
+    def _extract_cluster_info_stage1(self, clusters, lane_y1, lane_y2):
         if not clusters:
             return []
 
-        y_mid = (roi_y1 + roi_y2) / 2.0
+        y_mid = (lane_y1 + lane_y2) / 2.0
         total_tracks = sum(len(c["items"]) for c in clusters)
 
         cluster_info = []
@@ -299,7 +299,7 @@ class LaneTemplateEstimator:
     # 8) 2차 군집화
     #    1차 대표선끼리 다시 군집화
     # =========================================================
-    def _cluster_representatives_stage2(self, cluster_info_stage1, roi_y1, roi_y2, frame_height):
+    def _cluster_representatives_stage2(self, cluster_info_stage1, lane_y1, lane_y2, frame_height):
         """
         1차 군집 대표선들끼리 다시 거리 계산해서
         비슷한 흐름은 한 번 더 합친다.
@@ -317,8 +317,8 @@ class LaneTemplateEstimator:
                 dist = self._model_distance(
                     model,
                     cluster["rep_model"],
-                    roi_y1,
-                    roi_y2,
+                    lane_y1,
+                    lane_y2,
                     frame_height
                 )
 
@@ -342,14 +342,14 @@ class LaneTemplateEstimator:
     # =========================================================
     # 9) 2차 군집 결과 정리
     # =========================================================
-    def _extract_cluster_info_stage2(self, clusters2, roi_y1, roi_y2):
+    def _extract_cluster_info_stage2(self, clusters2, lane_y1, lane_y2):
         """
         2차 군집 결과를 최종 대표 집단으로 정리
         """
         if not clusters2:
             return []
 
-        y_mid = (roi_y1 + roi_y2) / 2.0
+        y_mid = (lane_y1 + lane_y2) / 2.0
         total_count = 0
         for c in clusters2:
             total_count += sum(item["count"] for item in c["items"])
@@ -403,13 +403,13 @@ class LaneTemplateEstimator:
     # =========================================================
     # 11) bootstrap 결과 그래프 저장
     # =========================================================
-    def save_trajectory_plot(self, roi_y1, roi_y2, filename=None):
+    def save_trajectory_plot(self, lane_y1, lane_y2, filename=None):
         if not self.collected_track_points:
             return None
 
         if filename is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"graph_v5_2_1_{timestamp}.png"
+            filename = f"graph_v5_3_{timestamp}.png"
 
         save_path = os.path.join(self.output_dir, filename)
 
@@ -423,7 +423,7 @@ class LaneTemplateEstimator:
             plt.text(xs[-1], ys[-1], str(tid), fontsize=8)
 
         # 최종 대표 집단
-        sample_ys = np.linspace(roi_y1, roi_y2, 50)
+        sample_ys = np.linspace(lane_y1, lane_y2, 50)
 
         for lane in self.current_template:
             model = lane["rep_model"]
@@ -445,7 +445,7 @@ class LaneTemplateEstimator:
         print("📊 그래프 저장:", save_path)
         return save_path
     
-    def save_trajectory_plot_stage1(self, roi_y1, roi_y2, cluster_info_stage1, filename=None):
+    def save_trajectory_plot_stage1(self, lane_y1, lane_y2, cluster_info_stage1, filename=None):
         """
     1차 군집화 결과 저장
     - 차량 궤적
@@ -457,7 +457,7 @@ class LaneTemplateEstimator:
 
         if filename is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"graph_stage1_v5_2_2_{timestamp}.png"
+            filename = f"graph_stage1_v5_3_{timestamp}.png"
 
         save_path = os.path.join(self.output_dir, filename)
 
@@ -471,7 +471,7 @@ class LaneTemplateEstimator:
             plt.text(xs[-1], ys[-1], str(tid), fontsize=8)
 
         # 1차 군집 대표선
-        sample_ys = np.linspace(roi_y1, roi_y2, 50)
+        sample_ys = np.linspace(lane_y1, lane_y2, 50)
 
         for c in cluster_info_stage1:
             model = c["rep_model"]
@@ -493,7 +493,7 @@ class LaneTemplateEstimator:
         print("📊 1차 군집 그래프 저장:", save_path)
         return save_path
     
-    def save_trajectory_plot_stage2(self, roi_y1, roi_y2, filename=None):
+    def save_trajectory_plot_stage2(self, lane_y1, lane_y2, filename=None):
         """
     2차 군집화 결과 저장
     - 차량 궤적
@@ -505,7 +505,7 @@ class LaneTemplateEstimator:
 
         if filename is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"graph_stage2_v5_2_2_{timestamp}.png"
+            filename = f"graph_stage2_v5_3_{timestamp}.png"
 
         save_path = os.path.join(self.output_dir, filename)
 
@@ -519,7 +519,7 @@ class LaneTemplateEstimator:
             plt.text(xs[-1], ys[-1], str(tid), fontsize=8)
 
         # 2차 군집 대표선
-        sample_ys = np.linspace(roi_y1, roi_y2, 50)
+        sample_ys = np.linspace(lane_y1, lane_y2, 50)
 
         for lane in self.current_template:
             model = lane["rep_model"]
@@ -549,9 +549,12 @@ class LaneTemplateEstimator:
     def update(self, frame_id, analysis):
         track_history = analysis["track_history"]
         track_points = analysis["track_points"]
-        roi_y1 = analysis["roi_y1"]
-        roi_y2 = analysis["roi_y2"]
         frame_height = analysis["frame_height"]
+
+        # ROI는 속도/상태/사고 판단용으로 유지한다.
+        # 차선 추정은 화면 전체 흐름을 보기 위해 별도 범위를 사용한다.
+        lane_y1 = int(frame_height * 0.20)
+        lane_y2 = int(frame_height * 0.95)
 
         # -----------------------------------------------------
         # A) bootstrap 단계
@@ -564,27 +567,27 @@ class LaneTemplateEstimator:
             if frame_id >= self.BOOTSTRAP_FRAMES:
                 # 1차 군집화
                 clusters_stage1 = self._cluster_track_models_stage1(
-                    roi_y1,
-                    roi_y2,
+                    lane_y1,
+                    lane_y2,
                     frame_height
                 )
                 cluster_info_stage1 = self._extract_cluster_info_stage1(
                     clusters_stage1,
-                    roi_y1,
-                    roi_y2
+                    lane_y1,
+                    lane_y2
                 )
 
                 # 2차 군집화
                 clusters_stage2 = self._cluster_representatives_stage2(
                     cluster_info_stage1,
-                    roi_y1,
-                    roi_y2,
+                    lane_y1,
+                    lane_y2,
                     frame_height
                 )
                 final_cluster_info = self._extract_cluster_info_stage2(
                     clusters_stage2,
-                    roi_y1,
-                    roi_y2
+                    lane_y1,
+                    lane_y2
                 )
 
                 # 최종 대표 집단을 current_template로 저장
@@ -606,15 +609,15 @@ class LaneTemplateEstimator:
 
                 # 1차 군집 그래프 저장
                 self.save_trajectory_plot_stage1(
-                    roi_y1=roi_y1,
-                    roi_y2=roi_y2,
+                    lane_y1=lane_y1,
+                    lane_y2=lane_y2,
                     cluster_info_stage1=cluster_info_stage1
                 )
 
                 # 2차 군집 그래프 저장
                 self.save_trajectory_plot_stage2(
-                    roi_y1=roi_y1,
-                    roi_y2=roi_y2
+                    lane_y1=lane_y1,
+                    lane_y2=lane_y2
                 )
 
                 clusters_stage1_debug = cluster_info_stage1

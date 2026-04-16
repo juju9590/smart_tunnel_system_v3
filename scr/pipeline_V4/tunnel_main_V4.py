@@ -10,29 +10,41 @@ from datetime import datetime
 from ultralytics import YOLO
 from pipeline_core_V4 import PipelineCore
 
-# ==========================
-# 설정
-# ==========================
-VIDEO_PATH = "../../data/raw_video/test_video/test_accident_1.mp4"
+# =========================================================
+# 1) 기본 경로 설정
+# =========================================================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, "../.."))
 
-OUTPUT_DIR = "../../outputs/pipeline_v4"
+# ---------------------------------------------------------
+# 테스트 영상 선택
+# 필요한 영상만 주석 해제해서 사용
+# ---------------------------------------------------------
+# VIDEO_PATH = r"d:/Finalpj_tunnel_V3/smart_tunnel_V3_data/raw_video/test_video/test_congestion_2-1.mp4"
+VIDEO_PATH = r"d:/Finalpj_tunnel_V3/smart_tunnel_V3_data/raw_video/test_video/test_normal_2.mp4"
+# VIDEO_PATH = r"d:/Finalpj_tunnel_V3/smart_tunnel_V3_data/raw_video/test_video/test_accident_1-1.mp4"
+
+MODEL_PATH = os.path.join(PROJECT_ROOT, "models", "best.pt")
+
+# ---------------------------------------------------------
+# 출력 경로
+# ---------------------------------------------------------
+OUTPUT_DIR = r"d:/Finalpj_tunnel_V3/smart_tunnel_V3_outputs/pipeline_v5_3"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+VIDEO_OUT_PATH = os.path.join(OUTPUT_DIR, f"v5_3_{timestamp}.mp4")
+LOG_PATH = os.path.join(OUTPUT_DIR, f"log_v5_3_{timestamp}.csv")
 
-video_name = os.path.basename(VIDEO_PATH).lower()
-
-if "accident" in video_name:
-    state_name = "accident"
-elif "congestion" in video_name:
-    state_name = "congestion"
-elif "normal" in video_name:
-    state_name = "normal"
-else:
-    state_name = "unknown"
-
-VIDEO_OUT_PATH = os.path.join(OUTPUT_DIR, f"{state_name}_{timestamp}.mp4")
-LOG_PATH = os.path.join(OUTPUT_DIR, f"{state_name}_{timestamp}.csv")
+print("BASE_DIR:", BASE_DIR)
+print("PROJECT_ROOT:", PROJECT_ROOT)
+print("VIDEO_PATH:", VIDEO_PATH)
+print("👉 EXISTS:", os.path.exists(VIDEO_PATH))
+print("영상 존재 여부:", os.path.exists(VIDEO_PATH))
+print("MODEL_PATH:", MODEL_PATH)
+print("모델 존재 여부:", os.path.exists(MODEL_PATH))
+print("VIDEO_OUT_PATH:", VIDEO_OUT_PATH)
+print("LOG_PATH:", LOG_PATH)
 
 
 def get_lane(cx, frame_width):

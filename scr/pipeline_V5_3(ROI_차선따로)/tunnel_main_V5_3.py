@@ -75,7 +75,7 @@ print("LOG_PATH:", LOG_PATH)
 # =========================================================
 # 2) 시각화 함수
 # =========================================================
-def draw_centerlines(frame, centerlines, roi_y1, roi_y2):
+def draw_centerlines(frame, centerlines, lane_y1, lane_y2):
     """
     대표 차선(centerlines)을 화면에 그린다.
 
@@ -94,7 +94,8 @@ def draw_centerlines(frame, centerlines, roi_y1, roi_y2):
         model = lane["rep_model"]
 
         pts = []
-        for y in range(int(roi_y1), int(roi_y2), 20):
+        # ROI 파란선은 별도로 유지하고, 차선은 더 긴 화면 기준 범위로 그린다.
+        for y in range(int(lane_y1), int(lane_y2), 20):
             # 현재 V5_3에서는 선형(linear) 모델을 주로 사용
             if model["type"] == "linear":
                 a, b = model["coef"]
@@ -352,12 +353,15 @@ def main():
             # -------------------------------------------------
             # 시각화
             # -------------------------------------------------
+            lane_y1 = int(height * 0.20)
+            lane_y2 = int(height * 0.95)
+
             draw_roi_lines(frame, merged)
             draw_centerlines(
                 frame,
                 merged.get("centerlines", []),
-                merged.get("roi_y1", int(height * 0.2)),
-                merged.get("roi_y2", int(height * 0.8))
+                lane_y1,
+                lane_y2
             )
             draw_tracks(frame, tracks, merged)
             draw_summary(frame, result)
