@@ -18,7 +18,7 @@ import traceback
 from datetime import datetime
 from ultralytics import YOLO
 
-from pipeline_core_V5_2_2 import PipelineCore
+from pipeline_core_V5_2_3 import PipelineCore
 
 
 print("🚀 SMART TUNNEL V5_2_1 시작")
@@ -30,8 +30,8 @@ PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, "../.."))
 # 경로 설정
 # ------------------------------------------
 # VIDEO_PATH = r"d:/Finalpj_tunnel_V3/smart_tunnel_V3_data/raw_video/test_video/test_congestion_2-1.mp4"
-# VIDEO_PATH = r"d:/Finalpj_tunnel_V3/smart_tunnel_V3_data/raw_video/test_video/test_normal_2.mp4"
-VIDEO_PATH = r"d:/Finalpj_tunnel_V3/smart_tunnel_V3_data/raw_video/test_video/test_accident_1-1.mp4"
+VIDEO_PATH = r"d:/Finalpj_tunnel_V3/smart_tunnel_V3_data/raw_video/test_video/test_normal_2.mp4"
+# VIDEO_PATH = r"d:/Finalpj_tunnel_V3/smart_tunnel_V3_data/raw_video/test_video/test_accident_1-1.mp4"
 
 MODEL_PATH = os.path.join(PROJECT_ROOT, "models", "best.pt")
 
@@ -211,7 +211,9 @@ def main():
     out = cv2.VideoWriter(VIDEO_OUT_PATH, fourcc, fps, (width, height))
 
     model = YOLO(MODEL_PATH)
-    pipeline = PipelineCore()
+    pipeline = PipelineCore(
+        frame_height=height,
+        lane_output_dir=r"D:\Finalpj_tunnel_V3\smart_tunnel_V3_outputs\pipeline_v5_2_1")
 
     print("✅ 분석 시작")
     print("   └ 저장 영상:", VIDEO_OUT_PATH)

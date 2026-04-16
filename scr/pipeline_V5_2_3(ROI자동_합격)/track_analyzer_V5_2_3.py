@@ -1,11 +1,11 @@
 # ==========================================
-# 파일명: track_analyzer_V5_2_1.py
+# 파일명: track_analyzer_V5_2_3.py
 # 설명:
-# 공통 추적 분석기 (차선 로직 분리 버전)
+# 공통 추적 분석기 (Adaptive ROI 연동 버전)
 # - track history 관리
 # - 차량 속도 계산
 # - bbox / speed / history 제공
-# - 차선 추정은 lane_template_V5_2_1.py로 분리
+# - ROI는 adaptive_roi 모듈에서 받아 사용
 # ==========================================
 
 import numpy as np
@@ -13,15 +13,9 @@ import numpy as np
 
 class TrackAnalyzer:
     def __init__(self):
-        # -----------------------------
-        # 공통 추적 메모리
-        # -----------------------------
         self.track_history = {}      # tid -> [(cx, cy), ...]
         self.prev_speeds = {}        # tid -> smoothed speed
 
-        # -----------------------------
-        # 디버그 정보
-        # -----------------------------
         self.last_debug = {
             "vehicle_count": 0,
             "avg_speed": 0.0,
@@ -30,12 +24,7 @@ class TrackAnalyzer:
             "track_points": {},
         }
 
-        # -----------------------------
-        # 파라미터
-        # -----------------------------
         self.frame_height = 720
-        self.ROI_Y1_RATIO = 0.30
-        self.ROI_Y2_RATIO = 0.80
 
         self.MAX_HISTORY = 60
         self.MAX_DY_JUMP = 40
@@ -45,21 +34,12 @@ class TrackAnalyzer:
         self.SPEED_JUMP_LIMIT = 10
 
     # =========================================================
-    # 기본 유틸
+    # 유틸
     # =========================================================
-    def _roi_bounds(self):
-        roi_y1 = int(self.frame_height * self.ROI_Y1_RATIO)
-        roi_y2 = int(self.frame_height * self.ROI_Y2_RATIO)
-        return roi_y1, roi_y2
-
     def _clamp(self, v, lo, hi):
         return max(lo, min(hi, v))
 
     def _update_frame_height_from_tracks(self, tracks):
-        """
-        bbox의 y2 최대값을 기반으로 대략 frame_height 보정
-        실제 frame shape를 main에서 넘기지 않으므로 안전한 추정만 수행
-        """
         max_y2 = 0
         for t in tracks:
             _, _, _, y2 = t["bbox"]
@@ -71,25 +51,21 @@ class TrackAnalyzer:
     # =========================================================
     # tracks -> boxes / history / speeds
     # =========================================================
-    def _update_tracks_and_speeds(self, tracks):
+    def _update_tracks_and_speeds(self, tracks, roi_y1, roi_y2):
         boxes = {}
         speeds = {}
         track_points = {}
-
-        roi_y1, roi_y2 = self._roi_bounds()
 
         for t in tracks:
             tid = t["id"]
             x1, y1, x2, y2 = t["bbox"]
 
-            # 하단 중심점(footpoint 기반 중심)
             cx = int((x1 + x2) / 2)
             cy = int(y2)
 
             boxes[tid] = (x1, y1, x2, y2)
             track_points[tid] = (cx, cy)
 
-            # history 저장
             self.track_history.setdefault(tid, []).append((cx, cy))
             if len(self.track_history[tid]) > self.MAX_HISTORY:
                 self.track_history[tid].pop(0)
@@ -99,7 +75,6 @@ class TrackAnalyzer:
                 speeds[tid] = self.prev_speeds.get(tid, 0.0)
                 continue
 
-            # 초기 보호
             if len(self.track_history[tid]) < 3:
                 speed = self.prev_speeds.get(tid, 0.0)
                 self.prev_speeds[tid] = speed
@@ -112,14 +87,13 @@ class TrackAnalyzer:
             dx = abs(xc - xp)
             dy = yc - yp
 
-            # 비정상 점프 제거
             if abs(dy) > self.MAX_DY_JUMP or dx > self.MAX_DX_JUMP:
                 speed = self.prev_speeds.get(tid, 0.0)
                 speeds[tid] = speed
                 continue
 
-            # 원근 보정
-            scale = (yc - roi_y1) / (roi_y2 - roi_y1 + 1e-6)
+            # 원근 보정: adaptive ROI 기준
+            scale = (yc - roi_y1) / (max(roi_y2 - roi_y1, 1) + 1e-6)
             scale = self._clamp(scale, 0.1, 1.0)
 
             speed = abs(dy) / (scale + 0.15)
@@ -133,7 +107,6 @@ class TrackAnalyzer:
             if abs(speed - prev_speed) > self.SPEED_JUMP_LIMIT:
                 speed = prev_speed
 
-            # smoothing
             speed = 0.3 * speed + 0.7 * prev_speed
             speed = self._clamp(speed, 0, self.MAX_SPEED)
 
@@ -146,23 +119,31 @@ class TrackAnalyzer:
         return boxes, speeds, avg_speed, track_points
 
     # =========================================================
-    # 외부 호출 메인 함수
+    # 외부 호출
     # =========================================================
-    def update(self, frame_id, tracks):
+    def update(self, frame_id, tracks, roi_info=None):
         """
-        입력:
-            frame_id : 프레임 번호
-            tracks   : [
-                {"id": tid, "bbox": (x1, y1, x2, y2)},
-                ...
-            ]
-
-        출력:
-            analysis dict
+        roi_info:
+            {
+                "roi_y1": ...,
+                "roi_y2": ...
+            }
         """
         self._update_frame_height_from_tracks(tracks)
 
-        boxes, speeds, avg_speed, track_points = self._update_tracks_and_speeds(tracks)
+        # ROI가 아직 없으면 기본값 사용
+        if roi_info is None:
+            roi_y1 = int(self.frame_height * 0.20)
+            roi_y2 = int(self.frame_height * 0.80)
+        else:
+            roi_y1 = roi_info["roi_y1"]
+            roi_y2 = roi_info["roi_y2"]
+
+        boxes, speeds, avg_speed, track_points = self._update_tracks_and_speeds(
+            tracks,
+            roi_y1,
+            roi_y2
+        )
 
         analysis = {
             "frame_id": frame_id,
@@ -173,15 +154,13 @@ class TrackAnalyzer:
             "track_points": track_points,
             "track_history": self.track_history,
             "frame_height": self.frame_height,
-            "roi_y1": self._roi_bounds()[0],
-            "roi_y2": self._roi_bounds()[1],
+            "roi_y1": roi_y1,
+            "roi_y2": roi_y2,
+            "roi_fixed": roi_info["roi_fixed"] if roi_info else False,
         }
 
         self.last_debug = analysis
         return analysis
 
-    # =========================================================
-    # 디버깅용 getter
-    # =========================================================
     def get_debug_info(self):
         return self.last_debug
