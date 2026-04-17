@@ -1,20 +1,19 @@
 # ==========================================
-# 파일명: traffic_state_V5_3.py
+# 파일명: traffic_state_V5_3_1.py
 # 설명:
-# V3 상태로직 복원 + 최소 보강 버전
-# - bottom point(y2) 기반 추적 유지
-# - 속도 계산만 2D 이동거리로 개선
-# - 최근 300프레임 평균속도 기반 상태 판단
+# V5_3_1 상태로직
+# - ROI 안 차량만 속도 계산
+# - bottom point(y2) 기반 abs(dy) 사용
+# - 화면 위치별 3구간 보정
+# - 차량별 EMA 적용
+# - 현재 프레임 평균속도 계산
+# - 최근 600프레임 평균속도와 혼합하여 최종 상태 판단
 # - 차량 수 조건 사용 안 함
 # - 빈 프레임에서는 0을 넣지 않고 기존 버퍼 유지
 # - 시작 상태는 NORMAL
-# - hold 로직 추가
-# - 디버그 정보 저장
+# - hold 로직 유지
 # - pipeline_core_V5_3.py 시그니처와 호환
 # ==========================================
-
-import math
-
 
 class TrafficState:
     def __init__(self):
@@ -26,26 +25,38 @@ class TrafficState:
         self.track_history = {}
 
         # -----------------------------
+        # 차량별 EMA 속도 저장
+        # {track_id: ema_speed}
+        # -----------------------------
+        self.track_ema_speed = {}
+
+        # -----------------------------
         # 최근 프레임 평균속도 버퍼
         # "프레임 평균속도"를 저장
-        # 상태 판단은 이 버퍼의 평균값으로 수행
+        # 최근 600프레임 평균 계산용
         # -----------------------------
         self.state_buffer = []
 
         # -----------------------------
         # 파라미터
         # -----------------------------
-        self.TRACK_HISTORY_SIZE = 20     # 차량별 최근 좌표 저장 개수
-        self.STATE_BUFFER_SIZE = 300     # 최근 300프레임 평균속도 사용
+        self.TRACK_HISTORY_SIZE = 20
+        self.STATE_BUFFER_SIZE = 600
 
-        # 상태 임계값 (기존 V3 스타일 유지)
-        self.JAM_SPEED_THR = 2.0
-        self.CONGESTION_SPEED_THR = 5.0
+        # EMA 계수
+        # 0.2 ~ 0.3 추천
+        self.EMA_ALPHA = 0.3
+
+        # 현재 프레임 평균 vs 최근 600프레임 평균 혼합 비율
+        self.SHORT_WEIGHT = 0.7
+        self.LONG_WEIGHT = 0.3
+
+        # 상태 임계값
+        self.JAM_SPEED_THR = 1.5
+        self.CONGESTION_SPEED_THR = 3.0
 
         # -----------------------------
         # 상태 안정화용 hold 로직
-        # - 후보 상태가 바뀌어도 바로 반영하지 않음
-        # - 일정 프레임 연속 확인되면 상태 변경
         # -----------------------------
         self.prev_state = "NORMAL"
         self.state_hold_count = 0
@@ -53,20 +64,74 @@ class TrafficState:
 
         # -----------------------------
         # 디버그 정보
-        # 매 프레임 update 후 확인 가능
         # -----------------------------
         self.last_debug = {
             "frame_id": -1,
             "vehicle_ids": [],
-            "vehicle_speeds": {},
+            "vehicle_speeds_raw": {},
+            "vehicle_speeds_corrected": {},
+            "vehicle_speeds_ema": {},
             "frame_avg_speed": 0.0,
             "buffer_avg_speed": 0.0,
+            "final_speed": 0.0,
             "candidate_state": "NORMAL",
             "final_state": "NORMAL",
             "hold_count": 0,
             "buffer_size": 0,
             "empty_frame": True,
+            "roi_box": None,
         }
+
+    def _get_roi_box(self, analysis):
+        """
+        pipeline_core에서 넘겨준 roi_box 사용
+        형식: (x1, y1, x2, y2)
+
+        없으면 roi_fixed를 이용해 세로 ROI만 사용
+        """
+        if analysis is None:
+            return None
+
+        roi_box = analysis.get("roi_box", None)
+        if roi_box is not None:
+            return roi_box
+
+        roi_fixed = analysis.get("roi_fixed", None)
+        if roi_fixed is not None and len(roi_fixed) == 2:
+            y1, y2 = roi_fixed
+            return (0, int(y1), 99999, int(y2))
+
+        return None
+
+    def _is_inside_roi(self, cx, cy, roi_box):
+        """
+        ROI 내부 여부 확인
+        ROI가 None이면 전체 화면 허용
+        """
+        if roi_box is None:
+            return True
+
+        rx1, ry1, rx2, ry2 = roi_box
+        return (rx1 <= cx <= rx2) and (ry1 <= cy <= ry2)
+
+    def _get_position_scale(self, cy, roi_box):
+        """
+        화면 위치별 3구간 보정
+        - ROI 기준 상/중/하 3구간
+        """
+        if roi_box is None:
+            return 1.0
+
+        _, ry1, _, ry2 = roi_box
+        roi_h = max(1, ry2 - ry1)
+        rel_y = cy - ry1
+
+        if rel_y < roi_h * 0.33:
+            return 2.0   # 상단(먼 쪽)
+        elif rel_y < roi_h * 0.66:
+            return 1.0   # 중단
+        else:
+            return 0.5   # 하단(가까운 쪽)
 
     def update(self, frame_id, tracks, analysis=None):
         """
@@ -77,8 +142,6 @@ class TrafficState:
                 ...
             ]
             analysis : pipeline에서 전달하는 공통 분석 결과
-                       (현재 상태로직에서는 필수 사용은 아니지만
-                        파이프라인 시그니처 호환 위해 받음)
 
         반환:
             {
@@ -87,11 +150,18 @@ class TrafficState:
             }
         """
 
-        speeds = {}
+        roi_box = self._get_roi_box(analysis)
+
+        raw_speeds = {}
+        corrected_speeds = {}
+        ema_speeds = {}
 
         # ==================================================
-        # 1) track별 bottom point(cx, y2) 저장
-        # 2) 직전 좌표와 비교해서 2D 이동거리 속도 계산
+        # 1) ROI 안 차량만 사용
+        # 2) bottom point(cx, y2) 저장
+        # 3) abs(dy) 기반 속도 계산
+        # 4) 위치 보정
+        # 5) 차량별 EMA 적용
         # ==================================================
         for t in tracks:
             tid = t["id"]
@@ -101,6 +171,10 @@ class TrafficState:
             cx = int((x1 + x2) / 2)
             cy = int(y2)
 
+            # ROI 밖 차량 제외
+            if not self._is_inside_roi(cx, cy,roi_box):
+                continue
+
             if tid not in self.track_history:
                 self.track_history[tid] = []
 
@@ -109,51 +183,61 @@ class TrafficState:
             if len(self.track_history[tid]) > self.TRACK_HISTORY_SIZE:
                 self.track_history[tid].pop(0)
 
-            # 기본 속도
-            speed = 0.0
+            raw_speed = 0.0
+            corrected_speed = 0.0
 
-            # 좌표가 2개 이상 있어야 이동거리 계산 가능
+            # 좌표가 2개 이상 있어야 이동량 계산 가능
             if len(self.track_history[tid]) >= 2:
                 prev_x, prev_y = self.track_history[tid][-2]
                 curr_x, curr_y = self.track_history[tid][-1]
 
-                dx = curr_x - prev_x
+                # bottom point의 y축 이동량만 사용
                 dy = curr_y - prev_y
+                raw_speed = abs(dy)
 
-                # 2D 이동거리
-                speed = math.sqrt(dx * dx + dy * dy)
+                # 위치 보정
+                pos_scale = self._get_position_scale(curr_y, roi_box)
+                corrected_speed = raw_speed * pos_scale
 
-            speeds[tid] = round(speed, 3)
+            # 차량별 EMA 적용
+            if tid not in self.track_ema_speed:
+                ema_speed = corrected_speed
+            else:
+                ema_speed = (
+                    self.EMA_ALPHA * corrected_speed
+                    + (1 - self.EMA_ALPHA) * self.track_ema_speed[tid]
+                )
+
+            self.track_ema_speed[tid] = ema_speed
+
+            raw_speeds[tid] = round(raw_speed, 3)
+            corrected_speeds[tid] = round(corrected_speed, 3)
+            ema_speeds[tid] = round(ema_speed, 3)
 
         # ==================================================
-        # 3) 현재 프레임 평균속도 계산
-        #    - 차량이 있으면 평균속도 계산
-        #    - 차량이 없으면 frame_avg_speed는 "버퍼 평균" 사용
-        #      (단, 버퍼도 비어 있으면 0)
+        # 6) 현재 프레임 평균속도 계산
+        #    - 차량이 있으면 EMA 속도의 평균
+        #    - 차량이 없으면 버퍼 평균 사용
         # ==================================================
-        if len(speeds) > 0:
-            frame_avg_speed = sum(speeds.values()) / len(speeds)
+        if len(ema_speeds) > 0:
+            frame_avg_speed = sum(ema_speeds.values()) / len(ema_speeds)
             empty_frame = False
 
             # 차량이 있을 때만 버퍼에 추가
             self.state_buffer.append(frame_avg_speed)
             if len(self.state_buffer) > self.STATE_BUFFER_SIZE:
                 self.state_buffer.pop(0)
-
         else:
             empty_frame = True
 
-            # 빈 프레임이면 0을 넣지 않는다
-            # 기존 버퍼 유지
+            # 빈 프레임이면 0을 넣지 않음
             if len(self.state_buffer) > 0:
                 frame_avg_speed = sum(self.state_buffer) / len(self.state_buffer)
             else:
                 frame_avg_speed = 0.0
 
         # ==================================================
-        # 4) 최근 300프레임 평균속도 계산
-        #    - 상태 판단은 이 값으로 수행
-        #    - 버퍼가 비었으면 시작 상태 NORMAL 유지
+        # 7) 최근 600프레임 평균속도 계산
         # ==================================================
         if len(self.state_buffer) > 0:
             buffer_avg_speed = sum(self.state_buffer) / len(self.state_buffer)
@@ -161,32 +245,38 @@ class TrafficState:
             buffer_avg_speed = 0.0
 
         # ==================================================
-        # 5) 후보 상태(candidate state) 계산
-        #    - 평균속도만 사용
-        #    - 차량 수 사용 안 함
+        # 8) 현재 프레임 평균 + 최근 600프레임 평균 혼합
         # ==================================================
         if len(self.state_buffer) == 0:
-            # 시작 직후 데이터가 없으면 NORMAL
+            final_speed = 0.0
+        else:
+            final_speed = (
+                self.SHORT_WEIGHT * frame_avg_speed
+                + self.LONG_WEIGHT * buffer_avg_speed
+            )
+
+        # ==================================================
+        # 9) 후보 상태(candidate state) 계산
+        #    - 속도만 사용
+        #    - 차량 수 조건 사용 안 함
+        # ==================================================
+        if len(self.state_buffer) == 0:
             candidate_state = "NORMAL"
         else:
-            if buffer_avg_speed < self.JAM_SPEED_THR:
+            if final_speed < self.JAM_SPEED_THR:
                 candidate_state = "JAM"
-            elif buffer_avg_speed < self.CONGESTION_SPEED_THR:
+            elif final_speed < self.CONGESTION_SPEED_THR:
                 candidate_state = "CONGESTION"
             else:
                 candidate_state = "NORMAL"
 
         # ==================================================
-        # 6) hold 로직 적용
-        #    - 후보 상태가 갑자기 바뀌더라도
-        #      일정 프레임 연속 확인 후 최종 반영
+        # 10) hold 로직 적용
         # ==================================================
         if candidate_state == self.prev_state:
-            # 기존 상태와 같으면 hold 카운트 초기화
             self.state_hold_count = 0
             final_state = self.prev_state
         else:
-            # 상태가 다르면 바로 바꾸지 않고 잠깐 관찰
             self.state_hold_count += 1
 
             if self.state_hold_count >= self.STATE_HOLD_FRAMES:
@@ -196,19 +286,23 @@ class TrafficState:
             final_state = self.prev_state
 
         # ==================================================
-        # 7) 디버그 정보 저장
+        # 11) 디버그 정보 저장
         # ==================================================
         self.last_debug = {
             "frame_id": frame_id,
-            "vehicle_ids": list(speeds.keys()),
-            "vehicle_speeds": speeds,
+            "vehicle_ids": list(ema_speeds.keys()),
+            "vehicle_speeds_raw": raw_speeds,
+            "vehicle_speeds_corrected": corrected_speeds,
+            "vehicle_speeds_ema": ema_speeds,
             "frame_avg_speed": round(frame_avg_speed, 3),
             "buffer_avg_speed": round(buffer_avg_speed, 3),
+            "final_speed": round(final_speed, 3),
             "candidate_state": candidate_state,
             "final_state": final_state,
             "hold_count": self.state_hold_count,
             "buffer_size": len(self.state_buffer),
             "empty_frame": empty_frame,
+            "roi_box": roi_box,
         }
 
         return {

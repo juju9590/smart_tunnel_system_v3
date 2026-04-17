@@ -12,7 +12,7 @@
 from adaptive_roi_V5_3 import AdaptiveROI
 from track_analyzer_V5_3 import TrackAnalyzer
 from lane_template_V5_3 import LaneTemplateEstimator
-from traffic_state_V5_3 import TrafficState
+from traffic_state_V5_3_2 import TrafficState
 from traffic_accident_V5_3 import AccidentDetector
 
 
@@ -43,15 +43,30 @@ class PipelineCore:
         # 3) 차선 추정
         lane_result = self.lane_estimator.update(frame_id, analysis)
 
-        # 4) 합치기
+        # --------------------------------------------------
+        # 4) state_model에서 쓰기 쉬운 roi_box 생성
+        #    x는 전체 폭 사용, y는 AdaptiveROI 결과 사용
+        # --------------------------------------------------
+        roi_box = (
+            0,
+            int(roi_info["raw_y1"]),
+            99999,
+            int(roi_info["raw_y2"]),
+        )
+
+        # 5) 합치기
         merged_analysis = {
             **analysis,
+
             "roi_raw_y1": roi_info["raw_y1"],
             "roi_raw_y2": roi_info["raw_y2"],
             "roi_sample_count": roi_info["sample_count"],
             "roi_used_fallback": roi_info["used_fallback"],
             "roi_span": roi_info["span"],
             "roi_fixed": roi_info["roi_fixed"],
+
+            # state_model에서 바로 사용할 ROI 박스
+            "roi_box": roi_box,
 
             "lane_map": lane_result["lane_map"],
             "raw_lane_map": lane_result["raw_lane_map"],
@@ -65,10 +80,10 @@ class PipelineCore:
             "clusters": lane_result.get("clusters", []),
         }
 
-        # 5) 상태 판단
+        # 6) 상태 판단
         state_result = self.state_model.update(frame_id, tracks, merged_analysis)
 
-        # 6) 사고 판단
+        # 7) 사고 판단
         accident_result = self.accident_model.update(frame_id, tracks, merged_analysis)
 
         return {
