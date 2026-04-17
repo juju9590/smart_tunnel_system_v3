@@ -15,6 +15,7 @@
 
 import os
 import pandas as pd
+from datetime import datetime
 
 from eval_utils import (
     load_csv,
@@ -48,17 +49,19 @@ ensure_dir(SUMMARY_DIR)
 # ==========================================
 # [2] 사용자 설정
 # ==========================================
-PIPELINE_LOG_CSV = r"D:\Finalpj_tunnel_V3\smart_tunnel_V3_outputs\pipeline_v5_3\log_v5_3_20260417_104149.csv"
+PIPELINE_LOG_CSV = r"D:\Finalpj_tunnel_V3\smart_tunnel_V3_outputs\pipeline_v5_4\log_v5_4_20260418_000058.csv"
 
 # 영상별 GT 파일명 맞춰서 변경해서 사용
-LANE_GT_CSV = os.path.join(GT_DIR, "lane_gt_test_normal_2.csv")
-ROI_GT_CSV = os.path.join(GT_DIR, "roi_gt_test_normal_2.csv")
+LANE_GT_CSV = os.path.join(GT_DIR, "lane_gt_test_congestion_2-1.csv")
+ROI_GT_CSV = os.path.join(GT_DIR, "roi_gt_test_congestion_2-1.csv")
 
 lane_gt_name = os.path.splitext(os.path.basename(LANE_GT_CSV))[0]
 video_tag = lane_gt_name.replace("lane_gt_", "")
 
-OUTPUT_CSV = os.path.join(OUTPUT_DIR, f"lane_roi_eval_log_{video_tag}.csv")
-SUMMARY_CSV = os.path.join(SUMMARY_DIR, f"lane_roi_summary_{video_tag}.csv")
+ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+OUTPUT_CSV = os.path.join(OUTPUT_DIR, f"lane_roi_eval_log_{video_tag}_{ts}.csv")
+SUMMARY_CSV = os.path.join(SUMMARY_DIR, f"lane_roi_summary_{video_tag}_{ts}.csv")
 
 
 # ==========================================

@@ -15,6 +15,7 @@
 
 import os
 import pandas as pd
+from datetime import datetime
 
 from eval_utils import (
     load_csv,
@@ -49,7 +50,13 @@ ensure_dir(SUMMARY_DIR)
 # ==========================================
 # [2] 사용자 설정
 # ==========================================
-PIPELINE_LOG_CSV = r"D:\Finalpj_tunnel_V3\smart_tunnel_V3_outputs\pipeline_v5_3\log_v5_3_20260417_104149.csv"
+PIPELINE_LOG_CSV = r"D:\Finalpj_tunnel_V3\smart_tunnel_V3_outputs\pipeline_v5_4\log_v5_4_20260418_000058.csv"
+
+print("PIPELINE_LOG_CSV =", PIPELINE_LOG_CSV)
+print("repr =", repr(PIPELINE_LOG_CSV))
+print("exists =", os.path.exists(PIPELINE_LOG_CSV))
+print("abspath =", os.path.abspath(PIPELINE_LOG_CSV))
+
 # GT_CSV = os.path.join(GT_DIR, "state_gt_test_normal_2.csv")
 # GT_CSV = os.path.join(GT_DIR, "state_gt_test_accident_1-1.csv")
 GT_CSV = os.path.join(GT_DIR, "state_gt_test_congestion_2-1.csv")
@@ -57,8 +64,10 @@ GT_CSV = os.path.join(GT_DIR, "state_gt_test_congestion_2-1.csv")
 gt_name = os.path.splitext(os.path.basename(GT_CSV))[0]
 video_tag = gt_name.replace("state_gt_", "")
 
-OUTPUT_CSV = os.path.join(OUTPUT_DIR, f"state_eval_log_{video_tag}.csv")
-SUMMARY_CSV = os.path.join(SUMMARY_DIR, f"state_summary_{video_tag}.csv")
+ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+OUTPUT_CSV = os.path.join(OUTPUT_DIR, f"state_eval_log_v5_4_{video_tag}_{ts}.csv")
+SUMMARY_CSV = os.path.join(SUMMARY_DIR, f"state_summary_v5_4_{video_tag}_{ts}.csv")
 
 # ==========================================
 # [3] 평가 함수

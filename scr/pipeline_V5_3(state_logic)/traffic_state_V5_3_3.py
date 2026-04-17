@@ -83,6 +83,7 @@ class TrafficState:
             "empty_frame": True,
             "valid_speed_frame": False,
             "roi_box": None,
+            "vehicle_dy": {},
         }
 
     def _get_roi_box(self, analysis):
@@ -158,6 +159,7 @@ class TrafficState:
         raw_speeds = {}
         corrected_speeds = {}
         ema_speeds = {}
+        dy_values = {}
 
         # ==================================================
         # 1) ROI 안 차량만 사용
@@ -197,6 +199,7 @@ class TrafficState:
                 # bottom point의 y축 이동량만 사용
                 dy = curr_y - prev_y
                 raw_speed = abs(dy)
+                dy_values[tid] = round(dy, 3)
 
                 # 위치 보정
                 pos_scale = self._get_position_scale(curr_y, roi_box)
@@ -318,6 +321,7 @@ class TrafficState:
             "empty_frame": empty_frame,
             "valid_speed_frame": valid_speed_frame,
             "roi_box": roi_box,
+            "vehicle_dy": dy_values,
         }
 
         return {

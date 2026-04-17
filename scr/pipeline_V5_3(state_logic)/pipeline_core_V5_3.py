@@ -12,7 +12,7 @@
 from adaptive_roi_V5_3 import AdaptiveROI
 from track_analyzer_V5_3 import TrackAnalyzer
 from lane_template_V5_3 import LaneTemplateEstimator
-from traffic_state_V5_3_2 import TrafficState
+from traffic_state_V5_3_3 import TrafficState
 from traffic_accident_V5_3 import AccidentDetector
 
 

@@ -1,5 +1,5 @@
 # ==========================================
-# 파일명: tunnel_main_V5_3.py
+# 파일명: tunnel_main_V5_3_.py
 # 설명:
 # SMART TUNNEL V5_3 실행 파일
 #
@@ -16,7 +16,7 @@
 # 4) 결과를 화면에 시각화하고
 # 5) 결과 영상 / CSV 로그를 저장한다
 #
-# [V5_3 핵심]
+# [V5_3_2 핵심]
 # - ROI 자동설정(초기 100프레임 bootstrap 후 고정)
 # - ROI 안에서 차선 bootstrap
 # - 1차 군집 + 2차 군집 기반 대표 차선 추정
@@ -45,8 +45,8 @@ PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, "../.."))
 # 테스트 영상 선택
 # 필요한 영상만 주석 해제해서 사용
 # ---------------------------------------------------------
-# VIDEO_PATH = r"d:/Finalpj_tunnel_V3/smart_tunnel_V3_data/raw_video/test_video/test_congestion_2-1.mp4"
-VIDEO_PATH = r"d:/Finalpj_tunnel_V3/smart_tunnel_V3_data/raw_video/test_video/test_normal_2.mp4"
+VIDEO_PATH = r"d:/Finalpj_tunnel_V3/smart_tunnel_V3_data/raw_video/test_video/test_congestion_2-1.mp4"
+# VIDEO_PATH = r"d:/Finalpj_tunnel_V3/smart_tunnel_V3_data/raw_video/test_video/test_normal_2.mp4"
 # VIDEO_PATH = r"d:/Finalpj_tunnel_V3/smart_tunnel_V3_data/raw_video/test_video/test_accident_1-1.mp4"
 
 MODEL_PATH = os.path.join(PROJECT_ROOT, "models", "best.pt")
@@ -168,53 +168,159 @@ def draw_roi_lines(frame, merged_analysis):
     cv2.line(frame, (0, roi_y2), (w, roi_y2), (255, 0, 0), 2)
 
 
-def draw_summary(frame, result):
+def draw_summary(frame, result, frame_id):
     """
-    화면 왼쪽 상단에 핵심 요약 정보 출력
+    V5_3_2
+    화면 왼쪽 상단에 미니 표 패널 형태로 핵심 정보 표시
+    표시 항목:
+    - Frame ID
+    - State
+    - Vehicles
+    - Avg Speed
+    - Accident
     """
-    merged = result["analysis"]
-    state_result = result["state"]
-    accident_result = result["accident"]
 
-    avg_speed = merged.get("avg_speed", 0.0)
+    merged = result.get("analysis", {})
+    state_result = result.get("state", {})
+    accident_result = result.get("accident", {})
+
+    # ---------------------------------------------
+    # 표시용 값 정리
+    # ---------------------------------------------
+    display_frame_id = frame_id
     vehicle_count = merged.get("vehicle_count", 0)
-    lane_count = merged.get("lane_count", 0)
 
-    roi_fixed = merged.get("roi_fixed", False)
-    roi_span = merged.get("roi_span", 0)
-    roi_sample_count = merged.get("roi_sample_count", 0)
+    if isinstance(state_result, dict):
+        state_debug = state_result.get("debug", {})
+    else:
+        state_debug = {}
 
-    template_phase = merged.get("template_phase", "-")
-    template_confirmed = merged.get("template_confirmed", False)
+    avg_speed = state_debug.get("buffer_avg_speed", 0.0)
 
-    state_text = str(state_result)
-    accident_text = str(accident_result)
+    # state_result가 dict일 수도 있고 문자열일 수도 있으니 안전 처리
+    if isinstance(state_result, dict):
+        state_text = state_result.get("state", "UNKNOWN")
+    else:
+        state_text = str(state_result)
 
-    y = 30
-    lines = [
-        f"Vehicles: {vehicle_count}",
-        f"Avg Speed: {avg_speed:.2f}",
-        f"Lane Count: {lane_count}",
-        f"ROI Fixed: {roi_fixed}",
-        f"ROI Span: {roi_span}",
-        f"ROI Samples: {roi_sample_count}",
-        f"Template Phase: {template_phase}",
-        f"Template Confirmed: {template_confirmed}",
-        f"State: {state_text}",
-        f"Accident: {accident_text}",
+    # accident_result도 dict일 수 있으니 핵심값만 추출
+    if isinstance(accident_result, dict):
+        accident_flag = accident_result.get("accident", False)
+        accident_text = "True" if accident_flag else "False"
+    else:
+        accident_text = str(accident_result)
+
+    # ---------------------------------------------
+    # 상태별 색상
+    # ---------------------------------------------
+    if state_text == "NORMAL":
+        state_color = (0, 255, 0)
+    elif state_text == "CONGESTION":
+        state_color = (0, 165, 255)
+    elif state_text == "JAM":
+        state_color = (0, 0, 255)
+    else:
+        state_color = (255, 255, 255)
+
+    accident_color = (0, 0, 255) if accident_text == "True" else (255, 255, 255)
+
+    # ---------------------------------------------
+    # 패널 크기 / 위치
+    # ---------------------------------------------
+    panel_x = 12
+    panel_y = 12
+    panel_w = 300
+    row_h = 34
+    header_h = 38
+    panel_h = header_h + row_h * 5 + 12
+
+    # ---------------------------------------------
+    # 반투명 배경 패널
+    # ---------------------------------------------
+    overlay = frame.copy()
+    cv2.rectangle(
+        overlay,
+        (panel_x, panel_y),
+        (panel_x + panel_w, panel_y + panel_h),
+        (30, 30, 30),
+        -1
+    )
+    alpha = 0.65
+    cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+
+    # 외곽선
+    cv2.rectangle(
+        frame,
+        (panel_x, panel_y),
+        (panel_x + panel_w, panel_y + panel_h),
+        (180, 180, 180),
+        1
+    )
+
+    # 헤더
+    cv2.putText(
+        frame,
+        "SMART TUNNEL",
+        (panel_x + 12, panel_y + 26),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.72,
+        (255, 255, 255),
+        2
+    )
+
+    # 헤더 구분선
+    cv2.line(
+        frame,
+        (panel_x + 8, panel_y + header_h),
+        (panel_x + panel_w - 8, panel_y + header_h),
+        (120, 120, 120),
+        1
+    )
+
+    rows = [
+        ("Frame ID", str(display_frame_id), (255, 255, 255)),
+        ("State", state_text, state_color),
+        ("Vehicles", str(vehicle_count), (255, 255, 255)),
+        ("Avg Speed", f"{avg_speed:.2f}", (255, 255, 255)),
+        ("Accident", accident_text, accident_color),
     ]
 
-    for line in lines:
+    label_x = panel_x + 14
+    value_x = panel_x + 155
+    start_y = panel_y + header_h + 24
+
+    for i, (label, value, value_color) in enumerate(rows):
+        y = start_y + i * row_h
+
+        if i > 0:
+            line_y = y - 18
+            cv2.line(
+                frame,
+                (panel_x + 10, line_y),
+                (panel_x + panel_w - 10, line_y),
+                (70, 70, 70),
+                1
+            )
+
         cv2.putText(
             frame,
-            line,
-            (15, y),
+            label,
+            (label_x, y),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (0, 255, 255),
+            0.58,
+            (210, 210, 210),
             2
         )
-        y += 24
+
+        cv2.putText(
+            frame,
+            value,
+            (value_x, y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.60,
+            value_color,
+            2
+        )
 
 
 # =========================================================
@@ -364,7 +470,7 @@ def main():
                 lane_y2
             )
             draw_tracks(frame, tracks, merged)
-            draw_summary(frame, result)
+            draw_summary(frame, result, frame_id)
 
             # -------------------------------------------------
             # 저장 / 로그
