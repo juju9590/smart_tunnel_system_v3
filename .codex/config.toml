@@ -1,0 +1,14 @@
+# Project-scoped Codex config
+# 위치: <repo>/.codex/config.toml
+
+# 기본 모델
+model = "gpt-5.4"
+
+# 프로젝트 루트 탐색 기준
+project_root_markers = [".git"]
+
+# AGENTS.md를 우선 사용하고, 없을 때만 아래 파일명도 탐색
+project_doc_fallback_filenames = ["TEAM_GUIDE.md", ".agents.md"]
+
+# 큰 안내문도 충분히 읽을 수 있게 여유 있게 설정
+project_doc_max_bytes = 65536
