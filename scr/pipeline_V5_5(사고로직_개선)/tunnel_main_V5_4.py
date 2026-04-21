@@ -1,7 +1,7 @@
 # ==========================================
-# 파일명: tunnel_main_V5_3_.py
+# 파일명: tunnel_main_V5_4_.py
 # 설명:
-# SMART TUNNEL V5_3 실행 파일
+# SMART TUNNEL V5_4 실행 파일
 #
 # 역할
 # 1) 테스트 영상을 읽는다
@@ -33,7 +33,7 @@ from ultralytics import YOLO
 from pipeline_core_V5_3 import PipelineCore
 
 
-print("🚀 SMART TUNNEL V5_3 시작")
+print("🚀 SMART TUNNEL V5_4 시작")
 
 # =========================================================
 # 1) 기본 경로 설정
@@ -45,23 +45,25 @@ PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, "../.."))
 # 테스트 영상 선택
 # 필요한 영상만 주석 해제해서 사용
 # ---------------------------------------------------------
-# VIDEO_PATH = r"d:/Finalpj_tunnel_V3/smart_tunnel_V3_data/raw_video/test_video/test_congestion_2-1.mp4"
+VIDEO_PATH = r"d:/Finalpj_tunnel_V3/smart_tunnel_V3_data/raw_video/test_video/test_congestion_2-1.mp4"
 # VIDEO_PATH = r"d:/Finalpj_tunnel_V3/smart_tunnel_V3_data/raw_video/test_video/test_congestion_2-2.mp4"
+
 # VIDEO_PATH = r"d:/Finalpj_tunnel_V3/smart_tunnel_V3_data/raw_video/test_video/test_normal_2.mp4"
+
 # VIDEO_PATH = r"d:/Finalpj_tunnel_V3/smart_tunnel_V3_data/raw_video/test_video/test_accident_1-1.mp4"
-VIDEO_PATH = r"d:/Finalpj_tunnel_V3/smart_tunnel_V3_data/raw_video/test_video/test_accident_3.mp4"
+# VIDEO_PATH = r"d:/Finalpj_tunnel_V3/smart_tunnel_V3_data/raw_video/test_video/test_accident_3.mp4"
 
 MODEL_PATH = os.path.join(PROJECT_ROOT, "models", "best.pt")
 
 # ---------------------------------------------------------
 # 출력 경로
 # ---------------------------------------------------------
-OUTPUT_DIR = r"d:/Finalpj_tunnel_V3/smart_tunnel_V3_outputs/pipeline_v5_4"
+OUTPUT_DIR = r"d:/Finalpj_tunnel_V3/smart_tunnel_V3_outputs/pipeline_v5_5_2"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-VIDEO_OUT_PATH = os.path.join(OUTPUT_DIR, f"v5_4_{timestamp}.mp4")
-LOG_PATH = os.path.join(OUTPUT_DIR, f"log_v5_4_{timestamp}.csv")
+VIDEO_OUT_PATH = os.path.join(OUTPUT_DIR, f"v5_5_2{timestamp}.mp4")
+LOG_PATH = os.path.join(OUTPUT_DIR, f"log_v5_5_2{timestamp}.csv")
 
 print("BASE_DIR:", BASE_DIR)
 print("PROJECT_ROOT:", PROJECT_ROOT)
