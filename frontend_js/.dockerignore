@@ -1,0 +1,19 @@
+# 1. 노드 패키지 폴더 (용량의 주범)
+node_modules/
+
+# 2. 빌드 결과물 (Dockerfile 내에서 npm run build로 새로 생성함)
+dist/
+build/
+
+# 3. 디버그 로그 및 환경 설정
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.env
+.env.local
+
+# 4. 기타 불필요한 파일
+.git/
+.vscode/
+.idea/
+README.md

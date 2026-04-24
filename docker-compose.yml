@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  # 1. Backend (Flask + YOLO)
+  backend:
+    image: hooneda/tads-backend:latest
+    container_name: tads-backend
+    restart: always
+    environment:
+      - TZ=Asia/Seoul
+    ports:
+      - "5000:5000"
+    # depends_on: db <- 이 부분 삭제됨!
+    env_file: .env
+    volumes:
+      - ./backend_flask/static/captures:/app/static/captures
+      - ./backend_flask/learned_models:/app/learned_models
+      - ./backend_flask/assets:/app/assets
+      - ./backend_flask/modules/plate/test:/app/modules/plate/test
+      - ./backend_flask/modules/plate/best_plates_golden:/app/modules/plate/best_plates_golden
+      - ./backend_flask/modules/tunnel/raw_video:/app/modules/tunnel/raw_video
+      - ./backend_flask/modules/chat:/app/modules/chat
+    networks:
+      - tads-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"   # 백엔드는 YOLO 추론 로그가 많으니 조금 더 넉넉히
+        max-file: "3"
+
+  # 2. Frontend (React / Vite)
+  frontend:
+    image: hooneda/tads-frontend:latest
+    container_name: tads-frontend
+    restart: always
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - tads-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  # 3. Auto-Deployment (Watchtower)
+  watchtower:
+    image: containrrr/watchtower
+    container_name: watchtower
+    restart: always
+    environment:
+      - DOCKER_API_VERSION=1.40 
+      - WATCHTOWER_POLL_INTERVAL=60
+      - TZ=Asia/Seoul
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: --interval 60 --cleanup
+    networks:
+      - tads-network
+
+networks:
+  tads-network:
+    driver: bridge
+
+# volumes: mysql_data 삭제됨!

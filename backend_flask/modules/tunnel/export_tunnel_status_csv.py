@@ -1,0 +1,219 @@
+# ==========================================
+# 파일명: export_tunnel_status_csv.py
+# 위치: backend_flask/modules/tunnel/export_tunnel_status_csv.py
+# 역할:
+# - tunnel status API를 주기적으로 호출
+# - 상태 / 차량 / 이벤트 로그를 CSV로 저장
+# - 기존 서비스 코드 수정 없이 별도 추출용으로 사용
+# 실행:
+#   python export_tunnel_status_csv.py
+# 종료:
+#   Ctrl + C
+# ==========================================
+
+import os
+import csv
+import time
+import requests
+from datetime import datetime
+
+
+STATUS_API_URL = "http://localhost:5000/api/tunnel/status"
+POLL_INTERVAL_SEC = 1.0
+
+
+def safe_float(value, default=0.0):
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
+def safe_int(value, default=0):
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def main():
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    output_dir = os.path.join(base_dir, "runtime_data", "csv_logs")
+    os.makedirs(output_dir, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    status_csv_path = os.path.join(output_dir, f"status_log_{timestamp}.csv")
+    vehicle_csv_path = os.path.join(output_dir, f"vehicle_log_{timestamp}.csv")
+    event_csv_path = os.path.join(output_dir, f"event_log_{timestamp}.csv")
+
+    status_file = open(status_csv_path, "w", newline="", encoding="utf-8-sig")
+    vehicle_file = open(vehicle_csv_path, "w", newline="", encoding="utf-8-sig")
+    event_file = open(event_csv_path, "w", newline="", encoding="utf-8-sig")
+
+    status_writer = csv.writer(status_file)
+    vehicle_writer = csv.writer(vehicle_file)
+    event_writer = csv.writer(event_file)
+
+    # ------------------------------------------
+    # CSV 헤더
+    # ------------------------------------------
+    status_writer.writerow([
+        "timestamp",
+        "frame_id",
+        "cctv_name",
+        "state",
+        "avg_speed",
+        "vehicle_count",
+        "lane_count",
+        "accident",
+    ])
+
+    vehicle_writer.writerow([
+        "timestamp",
+        "frame_id",
+        "cctv_name",
+        "vehicle_id",
+        "speed",
+        "lane",
+        "raw_lane",
+        "dwell_time",
+        "bbox",
+    ])
+
+    event_writer.writerow([
+        "timestamp",
+        "frame_id",
+        "cctv_name",
+        "event_message",
+    ])
+
+    # 이벤트 중복 저장 방지
+    seen_event_keys = set()
+
+    print("==========================================")
+    print("🚀 Tunnel CSV Exporter 시작")
+    print(f"STATUS API : {STATUS_API_URL}")
+    print(f"상태 로그  : {status_csv_path}")
+    print(f"차량 로그  : {vehicle_csv_path}")
+    print(f"이벤트 로그: {event_csv_path}")
+    print("종료하려면 Ctrl + C")
+    print("==========================================")
+
+    try:
+        while True:
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            try:
+                response = requests.get(STATUS_API_URL, timeout=5)
+                response.raise_for_status()
+                data = response.json()
+            except Exception as e:
+                print(f"❌ status API 호출 실패: {e}")
+                time.sleep(POLL_INTERVAL_SEC)
+                continue
+
+            frame_id = safe_int(data.get("frame_id", 0))
+            cctv_name = str(data.get("cctv_name", "-"))
+            state = str(data.get("state", "READY"))
+            avg_speed = safe_float(data.get("avg_speed", 0.0))
+            vehicle_count = safe_int(data.get("vehicle_count", 0))
+            lane_count = safe_int(data.get("lane_count", 0))
+            accident = bool(data.get("accident", False))
+
+            # ------------------------------------------
+            # 1) 상태 로그 저장 (프레임당 1줄)
+            # ------------------------------------------
+            status_writer.writerow([
+                now_str,
+                frame_id,
+                cctv_name,
+                state,
+                round(avg_speed, 2),
+                vehicle_count,
+                lane_count,
+                accident,
+            ])
+            status_file.flush()
+
+            # ------------------------------------------
+            # 2) 차량 로그 저장
+            # status API에 vehicles가 있으면 저장
+            # ------------------------------------------
+            vehicles = data.get("vehicles", [])
+            if isinstance(vehicles, list):
+                for v in vehicles:
+                    vehicle_writer.writerow([
+                        now_str,
+                        frame_id,
+                        cctv_name,
+                        v.get("id", ""),
+                        safe_float(v.get("speed", 0.0)),
+                        v.get("lane", ""),
+                        v.get("raw_lane", ""),
+                        safe_float(v.get("dwell_time", 0.0)),
+                        v.get("bbox", ""),
+                    ])
+                vehicle_file.flush()
+
+            # ------------------------------------------
+            # 3) 이벤트 로그 저장
+            # event_logs가 있으면 저장
+            # 없으면 events라도 저장
+            # ------------------------------------------
+            event_logs = data.get("event_logs", None)
+
+            if isinstance(event_logs, list) and len(event_logs) > 0:
+                for event_message in event_logs:
+                    event_key = (frame_id, cctv_name, str(event_message))
+                    if event_key in seen_event_keys:
+                        continue
+
+                    seen_event_keys.add(event_key)
+
+                    event_writer.writerow([
+                        now_str,
+                        frame_id,
+                        cctv_name,
+                        str(event_message),
+                    ])
+                event_file.flush()
+
+            else:
+                events = data.get("events", [])
+                if isinstance(events, list) and len(events) > 0:
+                    for event_message in events:
+                        event_key = (frame_id, cctv_name, str(event_message))
+                        if event_key in seen_event_keys:
+                            continue
+
+                        seen_event_keys.add(event_key)
+
+                        event_writer.writerow([
+                            now_str,
+                            frame_id,
+                            cctv_name,
+                            str(event_message),
+                        ])
+                    event_file.flush()
+
+            print(
+                f"✅ frame={frame_id} | cctv={cctv_name} | "
+                f"state={state} | speed={avg_speed:.2f} | "
+                f"vehicles={vehicle_count} | accident={accident}"
+            )
+
+            time.sleep(POLL_INTERVAL_SEC)
+
+    except KeyboardInterrupt:
+        print("\n🛑 CSV 추출 종료")
+
+    finally:
+        status_file.close()
+        vehicle_file.close()
+        event_file.close()
+        print("💾 CSV 파일 저장 완료")
+
+
+if __name__ == "__main__":
+    main()
