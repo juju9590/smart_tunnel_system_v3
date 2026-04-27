@@ -67,6 +67,16 @@ export const stopTunnelStream = async (BACKEND_URL) => {
 };
 
 /* =========================================================
+ * 목표 차선 수 설정
+ * ========================================================= */
+export const setTunnelTargetLaneCount = async (BACKEND_URL, laneCount) => {
+  const res = await axios.post(`${BACKEND_URL}/api/tunnel/lane/target-count`, {
+    lane_count: laneCount,
+  });
+  return res.data;
+};
+
+/* =========================================================
  * 다른탭에서 터널탭 돌아오면 다시시작
  * ========================================================= */
 

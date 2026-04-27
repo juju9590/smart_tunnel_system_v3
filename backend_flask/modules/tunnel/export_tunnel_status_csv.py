@@ -67,6 +67,20 @@ def main():
         "vehicle_count",
         "lane_count",
         "accident",
+        "weak_suspect",
+        "strong_suspect",
+        "confirm_candidate",
+        "has_real_accident_evidence",
+        "accident_score",
+        "recent_prediction_count",
+        "vehicle_drop",
+        "defense_large_vehicle_occlusion",
+        "defense_jam_stationary_cell",
+        "defense_bbox_occlusion_false_stop",
+        "pair_evidence_raw",
+        "pair_collision_valid",
+        "congestion_pair_only_false",
+        "reasons",
     ])
 
     vehicle_writer.writerow([
@@ -120,6 +134,20 @@ def main():
             vehicle_count = safe_int(data.get("vehicle_count", 0))
             lane_count = safe_int(data.get("lane_count", 0))
             accident = bool(data.get("accident", False))
+            weak_suspect = bool(data.get("weak_suspect", False))
+            strong_suspect = bool(data.get("strong_suspect", False))
+            confirm_candidate = bool(data.get("confirm_candidate", False))
+            has_real_accident_evidence = bool(data.get("has_real_accident_evidence", False))
+            accident_score = safe_float(data.get("accident_score", 0.0))
+            recent_prediction_count = safe_int(data.get("recent_prediction_count", 0))
+            vehicle_drop = safe_int(data.get("vehicle_drop", 0))
+            defense_large_vehicle_occlusion = bool(data.get("defense_large_vehicle_occlusion", False))
+            defense_jam_stationary_cell = bool(data.get("defense_jam_stationary_cell", False))
+            defense_bbox_occlusion_false_stop = bool(data.get("defense_bbox_occlusion_false_stop", False))
+            pair_evidence_raw = bool(data.get("pair_evidence_raw", False))
+            pair_collision_valid = bool(data.get("pair_collision_valid", False))
+            congestion_pair_only_false = bool(data.get("congestion_pair_only_false", False))
+            reasons = str(data.get("reasons", ""))
 
             # ------------------------------------------
             # 1) 상태 로그 저장 (프레임당 1줄)
@@ -133,6 +161,20 @@ def main():
                 vehicle_count,
                 lane_count,
                 accident,
+                weak_suspect,
+                strong_suspect,
+                confirm_candidate,
+                has_real_accident_evidence,
+                round(accident_score, 2),
+                recent_prediction_count,
+                vehicle_drop,
+                defense_large_vehicle_occlusion,
+                defense_jam_stationary_cell,
+                defense_bbox_occlusion_false_stop,
+                pair_evidence_raw,
+                pair_collision_valid,
+                congestion_pair_only_false,
+                reasons,
             ])
             status_file.flush()
 

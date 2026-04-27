@@ -30,15 +30,12 @@ import traceback
 from datetime import datetime
 from ultralytics import YOLO
 
-from pipeline_core_V5_5 import PipelineCore
+from pipeline_core_V6 import PipelineCore
 
 
-print("🚀 SMART TUNNEL V5_5 시작")
+print("🚀 SMART TUNNEL V6_1 시작")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-# tunnel_main_V5_5.py 위치:
-# backend_flask/modules/tunnel/pipeline_V5_5/
 TUNNEL_DIR = os.path.abspath(os.path.join(BASE_DIR, ".."))
 
 # ---------------------------------------------------------
@@ -64,7 +61,7 @@ OUTPUT_DIR = os.path.join(
     TUNNEL_DIR,
     "runtime_data",
     "eval_outputs",
-    "pipeline_v5_5"
+    "pipeline_v6_1"
 )
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 

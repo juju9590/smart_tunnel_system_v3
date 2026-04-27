@@ -69,15 +69,15 @@ class AccidentDetector:
         # 실시간 CCTV 방어 필터
         self.MAX_FRAME_TIME_GAP = 0.5
         self.FRAME_GAP_FACTOR = 3.0
-        self.MIN_TRACK_AGE = 10
-        self.CENTER_JUMP_FACTOR = 4.0
+        self.MIN_TRACK_AGE = 3 #기존 10
+        self.CENTER_JUMP_FACTOR = 6.0   # 기존 4.0
         self.MIN_CENTER_JUMP_ABS = 80.0
-        self.BBOX_AREA_JUMP_RATIO = 2.0
+        self.BBOX_AREA_JUMP_RATIO = 3.0 # 기존 2.0
         self.STRONG_WINDOW_FRAMES = 150
         self.STRONG_WINDOW_SEC = 5.0
-        self.STRONG_REPEAT_COUNT = 5
-        self.STOP_SPEED_THR = 2.0
-        self.STOP_HOLD_SEC = 2.0
+        self.STRONG_REPEAT_COUNT = 2    # 기존 5
+        self.STOP_SPEED_THR = 2.2  # 혼잡 기준과 맞춤
+        self.STOP_HOLD_SEC = 1.0        # 기존 2.0
         self.MIN_STRONG_VEHICLE_COUNT = 2
         self.SKIP_LOG_COOLDOWN_SEC = 5.0
 

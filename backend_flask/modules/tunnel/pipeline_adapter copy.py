@@ -14,7 +14,6 @@ import os
 import sys
 import cv2
 import traceback
-import csv
 from ultralytics import YOLO
 import time
 from collections import deque
@@ -26,7 +25,6 @@ DEBUG_GET_LANE_TEMPLATE = False
 class TunnelPipelineAdapter:
     def __init__(self):
         self.current_dir = os.path.dirname(os.path.abspath(__file__))
-        self.module_dir = self.current_dir
 
         # ------------------------------------------
         # 1) YOLO 모델 로드
@@ -37,15 +35,14 @@ class TunnelPipelineAdapter:
         # ------------------------------------------
         # 2) 내부 파이프라인 경로 연결
         # ------------------------------------------
-        # pipeline_dir = os.path.join(self.current_dir, "pipeline_V6")
-        pipeline_dir = os.path.join(self.current_dir, "pipeline_V6_1")
+        pipeline_dir = os.path.join(self.current_dir, "pipeline_V5_5")
         if pipeline_dir not in sys.path:
             sys.path.append(pipeline_dir)
 
         # ------------------------------------------
         # 3) 실제 파이프라인 import
         # ------------------------------------------
-        from pipeline_core_V6 import PipelineCore
+        from pipeline_core_V5_5 import PipelineCore
         self.PipelineCore = PipelineCore
 
         self.pipeline = None
@@ -60,9 +57,6 @@ class TunnelPipelineAdapter:
             "vehicle_count": 0,
             "accident": False,
             "lane_count": 0,
-            "target_lane_count": None,
-            "lane_count_stable": False,
-            "template_confirmed": False,
             "events": [],
             "frame_id": 0,
             "analysis": {},
@@ -81,47 +75,6 @@ class TunnelPipelineAdapter:
         self.prev_accident_flag = False
         self.prev_roi_fallback = None
         self.prev_template_confirmed = None
-
-        self.live_accident_debug_header = [
-            "timestamp",
-            "frame_id",
-            "cctv_name",
-            "vehicle_count",
-            "lane_count",
-            "target_lane_count",
-            "lane_count_stable",
-            "template_confirmed",
-            "state",
-            "avg_speed",
-            "accident",
-            "weak_suspect",
-            "strong_suspect",
-            "confirm_candidate",
-            "has_real_accident_evidence",
-            "accident_score",
-            "recent_prediction_count",
-            "vehicle_drop",
-            "pair_evidence_raw",
-            "pair_collision_valid",
-            "congestion_pair_only_false",
-            "defense_small_far_pair",
-            "false_stop_by_bbox_split",
-            "defense_bbox_split_false_stop",
-            "defense_queue_only_without_real_evidence",
-            "defense_large_vehicle_occlusion",
-            "defense_jam_stationary_cell",
-            "defense_bbox_occlusion_false_stop",
-            "reasons",
-        ]
-        self.live_accident_debug_file = None
-        self.live_accident_debug_writer = None
-        self.live_accident_debug_header_written = False
-        self.live_accident_debug_path = os.path.join(
-            self.module_dir,
-            "runtime_data",
-            "csv_logs",
-            f"live_accident_debug_{time.strftime('%Y%m%d_%H%M%S')}.csv"
-        )
 
         # =========================================================
         # [추가] 운영화면용 얇은 오버레이 스타일
@@ -159,9 +112,6 @@ class TunnelPipelineAdapter:
             "vehicle_count": 0,
             "accident": False,
             "lane_count": 0,
-            "target_lane_count": None,
-            "lane_count_stable": False,
-            "template_confirmed": False,
             "events": [],
             "frame_id": 0,
             "analysis": {},
@@ -526,68 +476,6 @@ class TunnelPipelineAdapter:
         if len(self.event_logs) == 0 or self.event_logs[-1] != log_text:
             self.event_logs.append(log_text)
 
-    def _ensure_live_accident_debug_writer(self):
-        if self.live_accident_debug_writer is not None:
-            return
-
-        log_dir = os.path.dirname(self.live_accident_debug_path)
-        os.makedirs(log_dir, exist_ok=True)
-
-        self.live_accident_debug_file = open(
-            self.live_accident_debug_path,
-            "a",
-            newline="",
-            encoding="utf-8-sig"
-        )
-        self.live_accident_debug_writer = csv.writer(self.live_accident_debug_file)
-
-        if not self.live_accident_debug_header_written:
-            self.live_accident_debug_writer.writerow(self.live_accident_debug_header)
-            self.live_accident_debug_header_written = True
-            self.live_accident_debug_file.flush()
-
-    def _write_live_accident_debug(self, front_status):
-        try:
-            self._ensure_live_accident_debug_writer()
-
-            row = [
-                time.strftime("%Y-%m-%d %H:%M:%S"),
-                int(front_status.get("frame_id", 0)),
-                str(front_status.get("cctv_name", self.current_cctv_name or "")),
-                int(front_status.get("vehicle_count", 0)),
-                int(front_status.get("lane_count", 0)),
-                front_status.get("target_lane_count", ""),
-                bool(front_status.get("lane_count_stable", False)),
-                bool(front_status.get("template_confirmed", False)),
-                str(front_status.get("state", "")),
-                float(front_status.get("avg_speed", 0.0)),
-                bool(front_status.get("accident", False)),
-                bool(front_status.get("weak_suspect", False)),
-                bool(front_status.get("strong_suspect", False)),
-                bool(front_status.get("confirm_candidate", False)),
-                bool(front_status.get("has_real_accident_evidence", False)),
-                front_status.get("accident_score", 0),
-                int(front_status.get("recent_prediction_count", 0)),
-                int(front_status.get("vehicle_drop", 0)),
-                bool(front_status.get("pair_evidence_raw", False)),
-                bool(front_status.get("pair_collision_valid", False)),
-                bool(front_status.get("congestion_pair_only_false", False)),
-                bool(front_status.get("defense_small_far_pair", False)),
-                bool(front_status.get("false_stop_by_bbox_split", False)),
-                bool(front_status.get("defense_bbox_split_false_stop", False)),
-                bool(front_status.get("defense_queue_only_without_real_evidence", False)),
-                bool(front_status.get("defense_large_vehicle_occlusion", False)),
-                bool(front_status.get("defense_jam_stationary_cell", False)),
-                bool(front_status.get("defense_bbox_occlusion_false_stop", False)),
-                str(front_status.get("reasons", "")),
-            ]
-
-            self.live_accident_debug_writer.writerow(row)
-            self.live_accident_debug_file.flush()
-
-        except Exception as e:
-            print(f"⚠️ live accident debug CSV 저장 실패: {e}")
-
     # =========================================================
     # 5) 프론트(status API)용 값 정리
     # =========================================================
@@ -609,23 +497,12 @@ class TunnelPipelineAdapter:
 
         if isinstance(accident_result, dict):
             accident_flag = bool(accident_result.get("accident", False))
-            accident_debug = accident_result
         elif isinstance(accident_result, bool):
             accident_flag = accident_result
-            accident_debug = {}
         else:
             accident_flag = False
-            accident_debug = {}
-
-        accident_reasons = accident_debug.get("reasons", [])
-        if isinstance(accident_reasons, list):
-            accident_reasons_text = "|".join(str(reason) for reason in accident_reasons)
-        else:
-            accident_reasons_text = str(accident_reasons) if accident_reasons is not None else ""
 
         lane_count = merged.get("lane_count", 0)
-        target_lane_count_raw = merged.get("target_lane_count", None)
-        target_lane_count = int(target_lane_count_raw) if target_lane_count_raw is not None else None
 
         speeds = merged.get("speeds", {})
         lane_map = merged.get("lane_map", {})
@@ -738,11 +615,6 @@ class TunnelPipelineAdapter:
     # -----------------------------
         roi_fallback = bool(merged.get("roi_used_fallback", False))
         template_confirmed = bool(merged.get("template_confirmed", False))
-        lane_count_stable = (
-            target_lane_count is not None
-            and int(lane_count) == int(target_lane_count)
-            and template_confirmed is True
-        )
 
         if self.prev_state_text is None:
             self.prev_state_text = state_text
@@ -795,9 +667,6 @@ class TunnelPipelineAdapter:
             "vehicle_count": vehicle_count,
             "accident": accident_flag,
             "lane_count": lane_count,
-            "target_lane_count": target_lane_count,
-            "lane_count_stable": bool(lane_count_stable),
-            "template_confirmed": bool(template_confirmed),
             "events": events,
             "event_logs": list(self.event_logs),
             "vehicles": vehicles,
@@ -811,41 +680,6 @@ class TunnelPipelineAdapter:
             "lane_reestimate_status": lane_reestimate_status,
             "lane_reestimate_frame_count": lane_reestimate_frame_count,
             "lane_reestimate_window": lane_reestimate_window,
-
-            # V6 사고탐지 디버그 값.
-            # 실시간 CCTV 평가용 CSV logger가 status payload만 보고도
-            # 사고 후보/방어 조건을 기록할 수 있도록 그대로 노출한다.
-            "weak_suspect": bool(accident_debug.get("weak_suspect", False)),
-            "strong_suspect": bool(accident_debug.get("strong_suspect", False)),
-            "confirm_candidate": bool(accident_debug.get("confirm_candidate", False)),
-            "has_real_accident_evidence": bool(accident_debug.get("has_real_accident_evidence", False)),
-            "accident_score": accident_debug.get("accident_score", 0),
-            "recent_prediction_count": accident_debug.get("recent_prediction_count", 0),
-            "vehicle_drop": accident_debug.get("vehicle_drop", 0),
-            "defense_large_vehicle_occlusion": bool(accident_debug.get("defense_large_vehicle_occlusion", False)),
-            "defense_jam_stationary_cell": bool(accident_debug.get("defense_jam_stationary_cell", False)),
-            "defense_bbox_occlusion_false_stop": (
-                "defense_bbox_occlusion_false_stop" in accident_reasons
-                if isinstance(accident_reasons, list)
-                else "defense_bbox_occlusion_false_stop" in accident_reasons_text
-            ),
-            "defense_queue_only_without_real_evidence": bool(
-                accident_debug.get(
-                    "defense_queue_only_without_real_evidence",
-                    accident_debug.get("queue_only_without_real_evidence", False)
-                )
-            ),
-            "defense_small_far_pair": bool(accident_debug.get("defense_small_far_pair", False)),
-            "false_stop_by_bbox_split": bool(accident_debug.get("false_stop_by_bbox_split", False)),
-            "defense_bbox_split_false_stop": (
-                "defense_bbox_split_false_stop" in accident_reasons
-                if isinstance(accident_reasons, list)
-                else "defense_bbox_split_false_stop" in accident_reasons_text
-            ),
-            "pair_evidence_raw": bool(accident_debug.get("pair_evidence_raw", False)),
-            "pair_collision_valid": bool(accident_debug.get("pair_collision_valid", False)),
-            "congestion_pair_only_false": bool(accident_debug.get("congestion_pair_only_false", False)),
-            "reasons": accident_reasons_text,
         }
 
     # =========================================================
@@ -870,9 +704,6 @@ class TunnelPipelineAdapter:
                     "vehicle_count": 0,
                     "accident": False,
                     "lane_count": 0,
-                    "target_lane_count": None,
-                    "lane_count_stable": False,
-                    "template_confirmed": False,
                     "events": ["pipeline initializing"],
                     "frame_id": frame_id,
                     "analysis": {},
@@ -909,7 +740,6 @@ class TunnelPipelineAdapter:
             self._draw_tracks(annotated, tracks, merged)
 
             front_status = self._build_front_status(result, frame_id, tracks)
-            self._write_live_accident_debug(front_status)
             self.last_result = front_status
 
             return annotated, front_status
@@ -924,9 +754,6 @@ class TunnelPipelineAdapter:
                 "vehicle_count": 0,
                 "accident": False,
                 "lane_count": 0,
-                "target_lane_count": None,
-                "lane_count_stable": False,
-                "template_confirmed": False,
                 "events": [f"pipeline error: {e}"],
                 "frame_id": frame_id,
                 "analysis": {},

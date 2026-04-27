@@ -254,6 +254,44 @@ def lane_save():
 
 
 # =========================================================
+# 목표 차선 수 설정
+# =========================================================
+@tunnel_bp.route("/lane/target-count", methods=["POST"])
+def lane_target_count():
+    data = request.get_json(silent=True) or {}
+
+    try:
+        lane_count = int(data.get("lane_count"))
+    except Exception:
+        return jsonify({
+            "ok": False,
+            "message": "lane_count는 2, 3, 4 중 하나여야 합니다."
+        }), 400
+
+    if lane_count not in (2, 3, 4):
+        return jsonify({
+            "ok": False,
+            "message": "lane_count는 2, 3, 4 중 하나여야 합니다."
+        }), 400
+
+    try:
+        result = service.set_target_lane_count(lane_count)
+    except AttributeError:
+        return jsonify({
+            "ok": False,
+            "message": "service.py에 set_target_lane_count() 메서드가 없습니다."
+        }), 500
+    except Exception as e:
+        return jsonify({
+            "ok": False,
+            "message": f"목표 차선 수 설정 중 오류: {str(e)}"
+        }), 500
+
+    status_code = 200 if result.get("ok", False) else 400
+    return jsonify(result), status_code
+
+
+# =========================================================
 # 사고 이벤트 처리
 # =========================================================
 @tunnel_bp.route("/event/resolve", methods=["POST"])

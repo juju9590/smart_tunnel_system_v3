@@ -4,6 +4,7 @@ import {
   fetchTunnelStatus,
   fetchTunnelCctvUrl,
   selectRandomCctv,
+  setTunnelTargetLaneCount,
   stopTunnelStream,
 } from "./api";
 
@@ -276,6 +277,9 @@ function TunnelModule({ host }) {
     vehicle_count: 0,
     accident: false,
     lane_count: 0,
+    target_lane_count: null,
+    lane_count_stable: false,
+    template_confirmed: false,
     events: [],
     event_logs: [],
     frame_id: 0,
@@ -308,6 +312,9 @@ function TunnelModule({ host }) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [reestimateLoading, setReestimateLoading] = useState(false);
+  const [laneEditMode, setLaneEditMode] = useState(false);
+  const [laneTargetInput, setLaneTargetInput] = useState("");
+  const [laneTargetLoading, setLaneTargetLoading] = useState(false);
   const [accidentModal, setAccidentModal] = useState(null);
   const [resolvedAccidentIds, setResolvedAccidentIds] = useState(() => new Set());
   const [eventTab, setEventTab] = useState("logs");
@@ -404,6 +411,12 @@ function TunnelModule({ host }) {
       vehicle_count: Number(data?.vehicle_count ?? 0),
       accident: Boolean(data?.accident ?? false),
       lane_count: Number(data?.lane_count ?? 0),
+      target_lane_count:
+        data?.target_lane_count === null || data?.target_lane_count === undefined
+          ? null
+          : Number(data.target_lane_count),
+      lane_count_stable: Boolean(data?.lane_count_stable ?? false),
+      template_confirmed: Boolean(data?.template_confirmed ?? false),
       events: Array.isArray(data?.events) ? data.events : [],
       event_logs: Array.isArray(data?.event_logs) ? data.event_logs : [],
       frame_id: Number(data?.frame_id ?? 0),
@@ -707,6 +720,36 @@ function TunnelModule({ host }) {
     }
   };
 
+  const handleLaneTargetApply = async () => {
+    const nextLaneCount = Number(laneTargetInput);
+
+    if (![2, 3, 4].includes(nextLaneCount)) {
+      setError("목표 차선 수는 2, 3, 4만 입력할 수 있습니다.");
+      return;
+    }
+
+    try {
+      setLaneTargetLoading(true);
+      setError("");
+
+      const data = await setTunnelTargetLaneCount(BACKEND_URL, nextLaneCount);
+
+      if (!data?.ok) {
+        setError(data?.message || "목표 차선 수 설정 실패");
+        return;
+      }
+
+      setLaneEditMode(false);
+      const refreshed = await fetchTunnelStatus(BACKEND_URL);
+      applyStatusData(refreshed);
+    } catch (err) {
+      console.error("lane target count error:", err);
+      setError("목표 차선 수 설정 실패");
+    } finally {
+      setLaneTargetLoading(false);
+    }
+  };
+
   const handleResolveAccident = async (action) => {
     if (!accidentModal?.event_id) return;
 
@@ -761,6 +804,18 @@ function TunnelModule({ host }) {
       ? "SUSPECT"
       : status.traffic_state || status.state
   );
+
+  const laneDisplayCount = status.target_lane_count || status.lane_count;
+  const hasTargetLaneCount = status.target_lane_count !== null && status.target_lane_count !== undefined;
+  const laneTargetPending =
+    hasTargetLaneCount &&
+    (!status.template_confirmed || Number(status.lane_count) !== Number(status.target_lane_count));
+  const laneCountColor = laneTargetPending ? "#facc15" : "#ffffff";
+  const laneHelperText = laneTargetPending
+    ? status.lane_reestimate_status === "reestimating"
+      ? "차선 안정화 중"
+      : "재추정 대기중"
+    : "";
 
   return (
     <div className="smart-page">
@@ -849,7 +904,66 @@ function TunnelModule({ host }) {
               <div className="traffic-summary-grid">
                 <div className="summary-card">
                   <div className="summary-card-label">차선수</div>
-                  <div className="summary-card-value">{status.lane_count}차선</div>
+                  {laneEditMode ? (
+                    <>
+                      <div className="summary-card-value small">목표 차선 수</div>
+                      <input
+                        type="number"
+                        min="2"
+                        max="4"
+                        value={laneTargetInput}
+                        onChange={(event) => setLaneTargetInput(event.target.value)}
+                        style={{
+                          width: "64px",
+                          marginTop: "6px",
+                          padding: "4px 6px",
+                          color: "#fff",
+                          background: "#111827",
+                          border: "1px solid #4b5563",
+                          borderRadius: "6px",
+                        }}
+                      />
+                      <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
+                        <button
+                          className="summary-mini-btn"
+                          onClick={handleLaneTargetApply}
+                          disabled={laneTargetLoading}
+                        >
+                          {laneTargetLoading ? "적용중..." : "적용"}
+                        </button>
+                        <button
+                          className="summary-mini-btn secondary"
+                          onClick={() => {
+                            setLaneEditMode(false);
+                            setLaneTargetInput("");
+                          }}
+                          disabled={laneTargetLoading}
+                        >
+                          취소
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="summary-card-value" style={{ color: laneCountColor }}>
+                        {laneDisplayCount}차선
+                      </div>
+                      {laneHelperText && (
+                        <div className="summary-card-value small" style={{ color: "#facc15" }}>
+                          {laneHelperText}
+                        </div>
+                      )}
+                      <button
+                        className="summary-mini-btn"
+                        onClick={() => {
+                          setLaneTargetInput(String(status.target_lane_count || status.lane_count || 2));
+                          setLaneEditMode(true);
+                        }}
+                      >
+                        수정
+                      </button>
+                    </>
+                  )}
                 </div>
 
                 <div className="summary-card">
@@ -985,7 +1099,7 @@ function TunnelModule({ host }) {
       {accidentModal && (
         <div className="accident-modal-backdrop">
           <div className="accident-modal">
-            <div className="accident-modal-title">🚨 사고 의심 이벤트 발생</div>
+            <div className="accident-modal-title">🚨 사고 이벤트 감지</div>
             <div className="accident-modal-body">
               <div>
                 <span>CCTV</span>
@@ -1000,8 +1114,12 @@ function TunnelModule({ host }) {
                 <strong>{accidentModal.event_time || "-"}</strong>
               </div>
               <div>
-                <span>사유</span>
-                <strong>{accidentModal.reason || "속도 급감/거리 변화/정지 패턴"}</strong>
+                <span>안내</span>
+                <strong>
+                  AI가 사고 상황으로 판단했습니다.
+                  <br />
+                  현재 상황을 확인해 주세요.
+                </strong>
               </div>
             </div>
             <div className="accident-modal-actions">

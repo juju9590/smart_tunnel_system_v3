@@ -46,6 +46,7 @@ class TrafficState:
         # 상태 임계값
         self.JAM_SPEED_THR = 1.8
         self.CONGESTION_SPEED_THR = 3.2
+        
 
         # hold
         self.prev_state = "NORMAL"

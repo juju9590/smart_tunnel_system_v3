@@ -111,6 +111,9 @@ class TunnelLiveService:
             "vehicle_count": 0,
             "accident": False,
             "lane_count": 0,
+            "target_lane_count": None,
+            "lane_count_stable": False,
+            "template_confirmed": False,
             "events": [],
             "frame_id": 0,
             "cctv_name": "-",
@@ -206,6 +209,14 @@ class TunnelLiveService:
         data.setdefault("lane_reestimate_status", "idle")
         data.setdefault("lane_reestimate_frame_count", 0)
         data.setdefault("lane_reestimate_window", 50)
+        data.setdefault("target_lane_count", None)
+        data.setdefault("template_confirmed", False)
+        target_lane_count = data.get("target_lane_count")
+        data["lane_count_stable"] = (
+            target_lane_count is not None
+            and int(data.get("lane_count", 0) or 0) == int(target_lane_count)
+            and bool(data.get("template_confirmed", False))
+        )
         data.setdefault("minute_vehicle_count", 0)
         data.setdefault("traffic_state", data.get("state", "NORMAL"))
         data.setdefault("accident_status", "NONE")
@@ -227,6 +238,14 @@ class TunnelLiveService:
             self.latest_status.setdefault("lane_reestimate_status", "idle")
             self.latest_status.setdefault("lane_reestimate_frame_count", 0)
             self.latest_status.setdefault("lane_reestimate_window", 50)
+            self.latest_status.setdefault("target_lane_count", None)
+            self.latest_status.setdefault("template_confirmed", False)
+            target_lane_count = self.latest_status.get("target_lane_count")
+            self.latest_status["lane_count_stable"] = (
+                target_lane_count is not None
+                and int(self.latest_status.get("lane_count", 0) or 0) == int(target_lane_count)
+                and bool(self.latest_status.get("template_confirmed", False))
+            )
             self.latest_status.setdefault("minute_vehicle_count", 0)
             self.latest_status.setdefault("traffic_state", self.latest_status.get("state", "NORMAL"))
             self.latest_status.setdefault("accident_status", "NONE")
@@ -319,6 +338,63 @@ class TunnelLiveService:
             "path": save_path
         }
 
+    def set_target_lane_count(self, lane_count):
+        try:
+            lane_count = int(lane_count)
+        except Exception:
+            return {
+                "ok": False,
+                "message": "lane_count는 정수여야 합니다."
+            }
+
+        if lane_count not in (2, 3, 4):
+            return {
+                "ok": False,
+                "message": "목표 차선 수는 2, 3, 4 중 하나여야 합니다."
+            }
+
+        lane_template = None
+        if hasattr(self.pipeline, "get_lane_template"):
+            lane_template = self.pipeline.get_lane_template()
+
+        if lane_template is None:
+            return {
+                "ok": False,
+                "message": "lane_template 객체를 찾지 못했습니다."
+            }
+
+        if hasattr(lane_template, "set_target_lane_count"):
+            ok = lane_template.set_target_lane_count(lane_count)
+        else:
+            lane_template.manual_lane_count = lane_count
+            ok = True
+
+        if not ok:
+            return {
+                "ok": False,
+                "message": "목표 차선 수 설정 실패"
+            }
+
+        current_lane_count = int(self.latest_status.get("lane_count", 0) or 0)
+        template_confirmed = bool(getattr(lane_template, "template_confirmed", False))
+        lane_count_stable = (
+            current_lane_count == lane_count
+            and template_confirmed is True
+        )
+
+        self._update_status({
+            "target_lane_count": lane_count,
+            "lane_count_stable": lane_count_stable,
+            "template_confirmed": template_confirmed,
+            "events": [f"목표 차선 수 {lane_count}차선 설정"],
+        })
+
+        return {
+            "ok": True,
+            "target_lane_count": lane_count,
+            "message": f"목표 차선 수가 {lane_count}차선으로 설정되었습니다."
+        }
+
     # =========================================================
     # 2-2) 사고 이벤트 캡처/저장
     # =========================================================
@@ -342,6 +418,9 @@ class TunnelLiveService:
         accident_flag = bool(status_data.get("accident", False))
         frame_id = int(status_data.get("frame_id", 0))
 
+        # 팝업/이벤트 저장은 AI 사고 확정 플래그에서만 시작한다.
+        # weak_suspect, strong_suspect, confirm_candidate, recent_prediction_count는
+        # status/log 디버그용으로만 사용하고 여기서는 보지 않는다.
         if not accident_flag:
             if self.latest_status.get("accident_status") == "SUSPECT":
                 return
@@ -452,15 +531,15 @@ class TunnelLiveService:
             "reason": reason,
             "capture_path": capture_path,
         })
-        event_logs = list(status_data.get("event_logs") or self.latest_status.get("event_logs") or [])
-        event_logs.append(f"[{event_time}] 사고 의심")
+        event_logs = list(self.latest_status.get("event_logs") or [])
+        event_logs.append(f"[{event_time}] AI 사고 확정 감지")
         self._update_status({
             "accident": False,
             "accident_status": "SUSPECT",
             "pending_accident_event": pending_event,
             "traffic_state": traffic_state,
             "event_logs": event_logs[-10:],
-            "events": ["사고 의심"],
+            "events": ["AI 사고 확정 감지"],
         })
 
         print(f"📸 사고 이벤트 저장 완료: {event_id}")
@@ -889,6 +968,7 @@ class TunnelLiveService:
 
         self.pipeline.reset_pipeline()
         self.active_cctv_name = cctv["name"]
+        self._clear_runtime_event_state()
 
         self.ventilation_manager.vehicle_entry_memory.clear()
         self.ventilation_manager.current_level = "NORMAL"
@@ -897,6 +977,28 @@ class TunnelLiveService:
         self.ventilation_manager.release_count = 0
 
         print(f"♻️ 스트림 시작 시 reset 완료: {self.active_cctv_name}")
+
+    def _clear_runtime_event_state(self):
+        """
+        새 CCTV 스트림 시작 시 화면/status에 남아 있던 실시간 이벤트 잔상을 지운다.
+        저장된 event json/csv 파일은 건드리지 않는다.
+        """
+        if hasattr(self.pipeline, "event_logs"):
+            self.pipeline.event_logs.clear()
+
+        if hasattr(self.pipeline, "prev_accident_flag"):
+            self.pipeline.prev_accident_flag = False
+
+        self.current_accident_event = None
+        self.prev_accident_flag = False
+
+        self._update_status({
+            "accident": False,
+            "accident_status": "NONE",
+            "pending_accident_event": None,
+            "events": [],
+            "event_logs": [],
+        })
 
     def _redirect_lane_memory_to_runtime(self):
         if not hasattr(self.pipeline, "get_lane_template"):
@@ -960,6 +1062,9 @@ class TunnelLiveService:
             "vehicle_count": 0,
             "accident": False,
             "lane_count": 0,
+            "target_lane_count": None,
+            "lane_count_stable": False,
+            "template_confirmed": False,
             "events": ["CCTV 변경됨 - 분석 초기화 중"],
             "frame_id": 0,
             "cctv_name": self.current_cctv["name"],
@@ -1030,6 +1135,9 @@ class TunnelLiveService:
                 "vehicle_count": 0,
                 "accident": False,
                 "lane_count": 0,
+                "target_lane_count": None,
+                "lane_count_stable": False,
+                "template_confirmed": False,
                 "events": ["CCTV 변경됨 - 분석 초기화 중"],
                 "frame_id": 0,
                 "cctv_name": self.current_cctv["name"],
