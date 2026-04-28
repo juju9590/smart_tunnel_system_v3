@@ -134,6 +134,8 @@ def main():
             vehicle_count = safe_int(data.get("vehicle_count", 0))
             lane_count = safe_int(data.get("lane_count", 0))
             accident = bool(data.get("accident", False))
+            accident_locked = bool(data.get("accident_locked", False))
+            final_accident_event = bool(accident or accident_locked)
             weak_suspect = bool(data.get("weak_suspect", False))
             strong_suspect = bool(data.get("strong_suspect", False))
             confirm_candidate = bool(data.get("confirm_candidate", False))
@@ -200,14 +202,27 @@ def main():
 
             # ------------------------------------------
             # 3) 이벤트 로그 저장
-            # event_logs가 있으면 저장
-            # 없으면 events라도 저장
+            # event_log_entries가 있으면 event_id 기준으로 새 이벤트만 저장
+            # legacy event_logs/events는 같은 실행 중 같은 메시지를 중복 저장하지 않는다.
             # ------------------------------------------
+            event_log_entries = data.get("event_log_entries", None)
             event_logs = data.get("event_logs", None)
+            wrote_event = False
 
-            if isinstance(event_logs, list) and len(event_logs) > 0:
-                for event_message in event_logs:
-                    event_key = (frame_id, cctv_name, str(event_message))
+            if isinstance(event_log_entries, list) and len(event_log_entries) > 0:
+                for event_item in event_log_entries:
+                    if isinstance(event_item, dict):
+                        event_id = event_item.get("event_id", "")
+                        event_message = event_item.get("text") or event_item.get("message", "")
+                    else:
+                        event_id = ""
+                        event_message = str(event_item)
+
+                    event_message = str(event_message)
+                    if "사고 감지" in event_message and not final_accident_event:
+                        continue
+
+                    event_key = ("event_id", cctv_name, event_id) if event_id != "" else ("event", cctv_name, event_message)
                     if event_key in seen_event_keys:
                         continue
 
@@ -217,15 +232,45 @@ def main():
                         now_str,
                         frame_id,
                         cctv_name,
-                        str(event_message),
+                        event_message,
                     ])
-                event_file.flush()
+                    wrote_event = True
+
+                if wrote_event:
+                    event_file.flush()
+
+            elif isinstance(event_logs, list) and len(event_logs) > 0:
+                for event_message in event_logs:
+                    event_message = str(event_message)
+                    if "사고 감지" in event_message and not final_accident_event:
+                        continue
+
+                    event_key = ("event_log", cctv_name, event_message)
+                    if event_key in seen_event_keys:
+                        continue
+
+                    seen_event_keys.add(event_key)
+
+                    event_writer.writerow([
+                        now_str,
+                        frame_id,
+                        cctv_name,
+                        event_message,
+                    ])
+                    wrote_event = True
+
+                if wrote_event:
+                    event_file.flush()
 
             else:
                 events = data.get("events", [])
                 if isinstance(events, list) and len(events) > 0:
                     for event_message in events:
-                        event_key = (frame_id, cctv_name, str(event_message))
+                        event_message = str(event_message)
+                        if "사고 감지" in event_message and not final_accident_event:
+                            continue
+
+                        event_key = ("event", cctv_name, event_message)
                         if event_key in seen_event_keys:
                             continue
 
@@ -235,9 +280,12 @@ def main():
                             now_str,
                             frame_id,
                             cctv_name,
-                            str(event_message),
+                            event_message,
                         ])
-                    event_file.flush()
+                        wrote_event = True
+
+                    if wrote_event:
+                        event_file.flush()
 
             print(
                 f"✅ frame={frame_id} | cctv={cctv_name} | "

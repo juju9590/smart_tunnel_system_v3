@@ -61,14 +61,14 @@ PIPELINE_LOG_CSV = os.path.join(
     TUNNEL_DIR,
     "runtime_data",
     "eval_outputs",
-    "pipeline_v6_1",
-    "congestion_jam_5min_log_20260427_152449.csv"  # 로그 파일명 붙여넣기
+    "pipeline_v6_1_0428",
+    "accident_tunnel_samae_log_20260428_151520.csv"  # 로그 파일명 붙여넣기
 )
 
 # GT_CSV = os.path.join(GT_DIR, "gt_accident_gubong.csv") #구봉터널 정답
 # GT_CSV = os.path.join(GT_DIR, "gt_accident_sangju.csv") #상주터널 정답
-# GT_CSV = os.path.join(GT_DIR, "gt_accident_samae.csv") #사매터널 정답
-GT_CSV = os.path.join(GT_DIR, "gt_congestion_jam_5min.csv") #혼잡+정체 정답
+GT_CSV = os.path.join(GT_DIR, "gt_accident_samae.csv") #사매터널 정답
+# GT_CSV = os.path.join(GT_DIR, "gt_congestion_jam_5min.csv") #혼잡+정체 정답
 
 
 gt_name = os.path.splitext(os.path.basename(GT_CSV))[0]

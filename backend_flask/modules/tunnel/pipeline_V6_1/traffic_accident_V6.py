@@ -77,6 +77,7 @@ class AccidentDetector:
         self.strong_candidate_history = deque()
         self.weak_candidate_history = deque()
         self.strong_reason_history = deque()
+        self.pair_collision_valid_history = deque()
 
         # 대형 차량이 화면에 들어오면 작은 차량 bbox가 순간적으로 가려져
         # detector의 차량 수가 줄어들 수 있다. 이 감소량은 사고 증거가 아니라
@@ -151,6 +152,12 @@ class AccidentDetector:
         # 최종 사고 lock에 필요한 frame candidate 반복 수
         self.ACCIDENT_CONFIRM_COUNT = 4
 
+        # pair_collision_valid 반복 사고 보강:
+        # 사매터널처럼 bbox jump/sudden stop은 약하지만 충돌성 pair가
+        # 일정 구간에 반복되는 사고 영상을 확정 후보 누적에 포함한다.
+        self.PAIR_REPEAT_WINDOW = 150
+        self.PAIR_REPEAT_CONFIRM_COUNT = 5
+
         # =====================================================
         # 8) pair 충돌 보조 로직
         # =====================================================
@@ -197,16 +204,23 @@ class AccidentDetector:
         self.accident_locked = False
         self.accident_start_frame = None
 
+        self.track_memory.clear()
+        self.cell_stationary_history.clear()
+        self.pair_memory.clear()
         self.frame_candidate_history.clear()
         self.strong_candidate_history.clear()
         self.weak_candidate_history.clear()
         self.strong_reason_history.clear()
+        self.pair_collision_valid_history.clear()
         self.vehicle_count_history.clear()
         self.prev_vehicle_count = None
 
         self.last_debug = {
             "frame_id": 0,
             "accident": False,
+            "acc_ratio": 0.0,
+            "frame_accident_prediction": False,
+            "recent_prediction_count": 0,
             "accident_locked": False,
             "accident_candidate_only": False,
             "accident_score": 0,
@@ -214,7 +228,22 @@ class AccidentDetector:
             "weak_suspect": False,
             "strong_suspect": False,
             "confirm_candidate": False,
+            "strong_candidate": False,
+            "weak_candidate": False,
+            "strong_confirmed": False,
+            "weak_confirmed": False,
+            "frame_confirmed": False,
+            "has_real_accident_evidence": False,
+            "has_final_accident_evidence": False,
+            "final_accumulation_blocked": False,
+            "history_info": {
+                "frame_candidate_count": 0,
+                "strong_candidate_count": 0,
+                "weak_candidate_count": 0,
+            },
         }
+
+        return True
 
     # =========================================================
     # 기본 유틸
@@ -1135,6 +1164,18 @@ class AccidentDetector:
             or sudden_stop_valid
         )
 
+        pair_only_without_direct_stop = (
+            pair_collision_valid
+            and not sudden_stop_reason
+            and not bbox_jump_then_fixed_reason
+            and not smoke_fire
+        )
+
+        if pair_only_without_direct_stop:
+            real_evidence_in_frame = False
+            if "defense_pair_only_without_direct_stop" not in reasons:
+                reasons.append("defense_pair_only_without_direct_stop")
+
         false_stop_by_bbox_split = (
             bbox_jump_then_fixed_reason
             and sudden_stop_reason
@@ -1158,7 +1199,19 @@ class AccidentDetector:
             if "defense_pair_only_congestion" not in reasons:
                 reasons.append("defense_pair_only_congestion")
 
+        if pair_collision_valid:
+            self.pair_collision_valid_history.append(frame_id)
+
+        while (
+            self.pair_collision_valid_history
+            and frame_id - self.pair_collision_valid_history[0] > self.PAIR_REPEAT_WINDOW
+        ):
+            self.pair_collision_valid_history.popleft()
+
+        pair_collision_repeat_count = len(self.pair_collision_valid_history)
+
         defense_congestion_like = "defense_congestion_like" in reasons
+        defense_too_few_vehicles = "defense_too_few_vehicles" in reasons
 
         # -----------------------------------------------------
         # 7) 후보 단계 분리
@@ -1209,6 +1262,7 @@ class AccidentDetector:
         # fixed obstacle + rear queue + persistent cell만 반복되는 경우는
         # 확정 누적(confirm history)에 넣지 않는다. 다만 디버그와 화면의
         # weak/strong suspect 표시는 유지해서 원인 분석은 가능하게 둔다.
+        defense_queue_only_without_real_evidence = False
         queue_only_without_real_evidence = (
             localized_fixed_reason
             and rear_queue_reason
@@ -1220,6 +1274,7 @@ class AccidentDetector:
         )
 
         if queue_only_without_real_evidence:
+            defense_queue_only_without_real_evidence = True
             score -= 4
             real_evidence_in_frame = False
             if "defense_queue_only_without_real_evidence" not in reasons:
@@ -1238,22 +1293,74 @@ class AccidentDetector:
             if "defense_bbox_split_false_stop" not in reasons:
                 reasons.append("defense_bbox_split_false_stop")
 
-        confirm_candidate = (
+        # real accident evidence는 현재 프레임 기준으로 계산한다.
+        # pair 충돌은 직접 증거로 인정하지만, sudden stop은 대형차/가림
+        # 방어를 통과한 경우에만 인정한다.
+        pair_collision_repeat_evidence = (
+            pair_collision_repeat_count >= self.PAIR_REPEAT_CONFIRM_COUNT
+            and vehicle_count >= 3
+            and visible_vehicle_count >= 3
+            and not defense_too_few_vehicles
+            and not defense_queue_only_without_real_evidence
+            and not defense_congestion_like
+            and not defense_jam_stationary_cell
+            and not defense_large_vehicle_occlusion
+            and not false_stop_by_occlusion
+            and not false_stop_by_bbox_split
+            and not congestion_pair_only_false
+            and not defense_small_far_pair
+            and not pair_only_without_direct_stop
+        )
+
+        has_real_accident_evidence = bool(
+            real_evidence_in_frame
+        )
+
+        # 방어 reason이 찍힌 프레임은 score/의심 표시는 유지하되,
+        # final accident 확정용 history에는 누적하지 않는다.
+        final_accumulation_blocked = (
+            not has_real_accident_evidence
+            or defense_queue_only_without_real_evidence
+            or defense_too_few_vehicles
+            or defense_congestion_like
+            or defense_jam_stationary_cell
+            or pair_only_without_direct_stop
+            or vehicle_count < 3
+            or visible_vehicle_count < 3
+        )
+
+        pair_collision_repeat_confirm = (
+            pair_collision_repeat_evidence
+            and not final_accumulation_blocked
+            and not defense_queue_only_without_real_evidence
+            and vehicle_count >= 3
+            and visible_vehicle_count >= 3
+        )
+
+        if pair_collision_repeat_confirm and "pair_collision_repeat" not in reasons:
+            reasons.append("pair_collision_repeat")
+
+        base_confirm_candidate = (
             strong_suspect
             and score >= 7
-            and real_evidence_in_frame
+            and has_real_accident_evidence
             and not defense_congestion_like
             and not defense_jam_stationary_cell
             and not defense_large_vehicle_occlusion
             and not false_stop_by_occlusion
             and not queue_only_without_real_evidence
             and not false_stop_by_bbox_split
+            and not final_accumulation_blocked
+        )
+
+        confirm_candidate = (
+            base_confirm_candidate
         )
 
         history_info = self._update_histories(
             frame_id=frame_id,
             score=score,
-            strong_candidate=strong_suspect,
+            strong_candidate=strong_suspect and not final_accumulation_blocked,
             weak_candidate=weak_suspect,
             confirm_candidate=confirm_candidate,
             reasons=reasons,
@@ -1278,10 +1385,31 @@ class AccidentDetector:
             history_info["weak_candidate_count"] >= self.WEAK_CONFIRM_COUNT
         )
 
-        # real accident evidence는 현재 프레임 기준으로 다시 계산한다.
-        # pair 충돌은 직접 증거로 인정하지만, sudden stop은 대형차/가림
-        # 방어를 통과한 경우에만 인정한다.
-        has_real_accident_evidence = bool(real_evidence_in_frame)
+        has_final_accident_evidence = (
+            pair_collision_valid
+            or has_real_accident_evidence
+            or confirm_candidate
+        )
+
+        # V6_1 마감 버전에서는 pair 반복은 보완 후보 지표로만 사용한다.
+        # 성채/경부동탄 실시간 CCTV 오탐 방지를 위해 직접 lock 경로는 비활성화한다.
+        pair_collision_repeat_lock = False
+
+        new_lock_allowed = (
+            vehicle_count >= 3
+            and visible_vehicle_count >= 3
+            and not final_accumulation_blocked
+            and not defense_queue_only_without_real_evidence
+            and not defense_too_few_vehicles
+            and not defense_congestion_like
+            and not defense_jam_stationary_cell
+            and not defense_large_vehicle_occlusion
+            and not false_stop_by_occlusion
+            and not false_stop_by_bbox_split
+            and not congestion_pair_only_false
+            and not defense_small_far_pair
+            and not pair_only_without_direct_stop
+        )
 
         # 사고 확정 조건:
         # strong 후보와 confirm 후보가 반복되어야 하며,
@@ -1291,9 +1419,8 @@ class AccidentDetector:
             not self.accident_locked
             and strong_confirmed
             and frame_confirmed
-            and has_real_accident_evidence
-            and not defense_congestion_like
-            and not defense_large_vehicle_occlusion
+            and has_final_accident_evidence
+            and new_lock_allowed
         ):
             self.accident_locked = True
             self.accident_start_frame = frame_id
@@ -1344,12 +1471,24 @@ class AccidentDetector:
             "weak_confirmed": bool(weak_confirmed),
             "frame_confirmed": bool(frame_confirmed),
             "has_real_accident_evidence": bool(has_real_accident_evidence),
+            "has_final_accident_evidence": bool(has_final_accident_evidence),
+            "final_accumulation_blocked": bool(final_accumulation_blocked),
+            "new_lock_allowed": bool(new_lock_allowed),
+            "pair_collision_repeat_count": int(pair_collision_repeat_count),
+            "pair_collision_repeat_count_window": int(pair_collision_repeat_count),
+            "pair_collision_repeat_window": int(self.PAIR_REPEAT_WINDOW),
+            "pair_collision_repeat_evidence": bool(pair_collision_repeat_evidence),
+            "pair_collision_repeat_confirm": bool(pair_collision_repeat_confirm),
+            "pair_collision_repeat_lock": bool(pair_collision_repeat_lock),
 
             "traffic_state": traffic_state,
             "defense_congestion_like": bool(defense_congestion_like),
+            "defense_too_few_vehicles": bool(defense_too_few_vehicles),
             "defense_jam_stationary_cell": bool(defense_jam_stationary_cell),
             "defense_large_vehicle_occlusion": bool(defense_large_vehicle_occlusion),
+            "defense_queue_only_without_real_evidence": bool(defense_queue_only_without_real_evidence),
             "queue_only_without_real_evidence": bool(queue_only_without_real_evidence),
+            "defense_pair_only_without_direct_stop": bool(pair_only_without_direct_stop),
             "false_stop_by_bbox_split": bool(false_stop_by_bbox_split),
             "pair_evidence_raw": bool(pair_evidence_raw),
             "pair_collision_valid": bool(pair_collision_valid),
@@ -1396,12 +1535,24 @@ class AccidentDetector:
             "confirm_candidate": bool(confirm_candidate),
             "weak_confirmed": bool(weak_confirmed),
             "has_real_accident_evidence": bool(has_real_accident_evidence),
+            "has_final_accident_evidence": bool(has_final_accident_evidence),
+            "final_accumulation_blocked": bool(final_accumulation_blocked),
+            "new_lock_allowed": bool(new_lock_allowed),
+            "defense_too_few_vehicles": bool(defense_too_few_vehicles),
             "defense_jam_stationary_cell": bool(defense_jam_stationary_cell),
             "defense_large_vehicle_occlusion": bool(defense_large_vehicle_occlusion),
+            "defense_queue_only_without_real_evidence": bool(defense_queue_only_without_real_evidence),
             "queue_only_without_real_evidence": bool(queue_only_without_real_evidence),
+            "defense_pair_only_without_direct_stop": bool(pair_only_without_direct_stop),
             "false_stop_by_bbox_split": bool(false_stop_by_bbox_split),
             "pair_evidence_raw": bool(pair_evidence_raw),
             "pair_collision_valid": bool(pair_collision_valid),
+            "pair_collision_repeat_count": int(pair_collision_repeat_count),
+            "pair_collision_repeat_count_window": int(pair_collision_repeat_count),
+            "pair_collision_repeat_window": int(self.PAIR_REPEAT_WINDOW),
+            "pair_collision_repeat_evidence": bool(pair_collision_repeat_evidence),
+            "pair_collision_repeat_confirm": bool(pair_collision_repeat_confirm),
+            "pair_collision_repeat_lock": bool(pair_collision_repeat_lock),
             "congestion_pair_only_false": bool(congestion_pair_only_false),
             "defense_small_far_pair": bool(defense_small_far_pair),
             "small_bbox_pair": bool(small_far_pair_debug.get("small_bbox_pair", False)),

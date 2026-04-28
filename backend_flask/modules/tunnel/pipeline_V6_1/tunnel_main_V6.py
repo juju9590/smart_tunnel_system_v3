@@ -33,7 +33,7 @@ from ultralytics import YOLO
 from pipeline_core_V6 import PipelineCore
 
 
-print("🚀 SMART TUNNEL V6_1 시작")
+print("🚀 SMART TUNNEL V6_1_0428 시작")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TUNNEL_DIR = os.path.abspath(os.path.join(BASE_DIR, ".."))
@@ -61,7 +61,7 @@ OUTPUT_DIR = os.path.join(
     TUNNEL_DIR,
     "runtime_data",
     "eval_outputs",
-    "pipeline_v6_1"
+    "pipeline_v6_1_0428"
 )
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
