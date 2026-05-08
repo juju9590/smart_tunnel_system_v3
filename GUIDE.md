@@ -1,106 +1,84 @@
-## 💻 1. Frontend Setup (React / Vite)
+## 2. Backend 설정
 
-프론트엔드 실행을 위해 아래 명령어를 순서대로 입력하세요.
+### 2-1. 백엔드 폴더 이동
 
-```bash
-cd frontend_js
-npm install
-npm run dev
-```
-
----
-
-## ⚙️ 2. Simulation & Environment (.env)
-
-데이터 및 환경 변수 설정을 위해 아래 작업을 수행하세요.
-
-### 📁 Assets 설정
-- `assets` 폴더를 다운로드하여  
-  `backend_flask/` 경로에 삽입합니다.
-
-### 📁 test 설정
-- `test` 폴더를 다운로드하여  
-  `backend_flask/modules/plate/` 경로에 삽입합니다.
-
-### 🔑 환경 변수 설정
-- `env.txt` 파일을 다운로드 후  
-- 프로젝트 최상단 폴더에 위치시키고  
-- 파일명을 `.env`로 변경합니다.
-
----
-
-## 🐍 3. Backend Setup (Flask)
-
-백엔드 가상환경 설정 및 라이브러리 설치 가이드입니다.
-
-⚠️ **주의:**  
-작업 전 `backend_flask` 폴더 내 기존 `migrations` 폴더가 있다면 반드시 삭제하세요.
+프로젝트 루트에서 백엔드 폴더로 이동합니다.
 
 ```bash
 cd backend_flask
-
-# 1. Conda 가상환경 생성 및 활성화
-conda create -n tads python=3.11 -y
-conda activate tads
-
-# 2. 필수 라이브러리 설치
-pip install -r requirements.txt
 ```
 
 ---
 
-## 🗄️ 4. Database Setup (MySQL)
+### 2-2. Python 패키지 설치
 
-데이터베이스 초기화 및 테이블 생성을 위한 단계입니다.
-
-### 🛠️ DB 생성
-
-MySQL Workbench 또는 VSCode Database 확장에서 아래 쿼리를 실행하세요.
-
-```sql
-CREATE DATABASE tads;
-```
-
-### 🔄 Migration 실행
+백엔드 실행에 필요한 Python 패키지를 설치합니다.
 
 ```bash
-flask db init
-flask db migrate -m "Initial migration"
-flask db upgrade
+python -m pip install -r requirements.txt
 ```
 
-### ▶️ 서버 실행
+---
+
+## 3. 환경변수 설정
+
+실시간 CCTV 조회를 위해 ITS API 설정이 필요합니다.
+
+`backend_flask/.env.example` 파일을 참고하여 `backend_flask/.env` 파일을 생성합니다.
+
+```bash
+copy .env.example .env
+```
+
+생성된 `.env` 파일을 열고 실제 값을 입력합니다.
+
+```env
+ITS_API_KEY=your_its_api_key_here
+ITS_CCTV_API_URL=your_its_cctv_api_url_here
+```
+
+실제 입력 예시는 아래와 같습니다.
+
+```env
+ITS_API_KEY=실제_ITS_API_KEY
+ITS_CCTV_API_URL=https://openapi.its.go.kr:9443/cctvInfo
+```
+
+> `.env` 파일은 API Key가 포함되므로 GitHub에 올리지 않습니다.  
+> GitHub에는 `.env.example` 파일만 포함합니다.
+
+---
+
+## 4. Backend 실행
+
+`backend_flask` 폴더에서 Flask 서버를 실행합니다.
 
 ```bash
 python app.py
 ```
 
----
+정상 실행 시 아래 주소에서 백엔드 서버가 실행됩니다.
 
-## 🤝 5. Collaboration Guide
-
-협업 규칙(Fork, PR, 브랜치 전략)은 아래 문서를 참고하세요.
-
-👉 [CONTRIBUTING.md 보러가기](./CONTRIBUTING.md)
-
----
-
-## 🚀 Quick Start
-
-빠르게 실행하고 싶다면 아래 순서대로 실행하세요.
-
-```bash
-# frontend
-cd frontend_js
-npm install
-npm run dev
-
-# backend
-cd backend_flask
-conda activate tads
-python app.py
+```text
+http://127.0.0.1:5000
 ```
 
 ---
 
-© 2026 TADS Team. All Rights Reserved.
+## 5. Backend 동작 확인
+
+백엔드 서버가 실행 중인 상태에서 브라우저 또는 API 도구로 아래 주소를 확인합니다.
+
+```text
+http://127.0.0.1:5000/api/tunnel/cctv-list
+```
+
+정상 동작 시 CCTV 목록 JSON 응답이 반환됩니다.
+
+만약 CCTV 연결이 실패하면 다음 항목을 확인합니다.
+
+- `backend_flask/.env` 파일이 존재하는지
+- `ITS_API_KEY` 값이 실제 키인지
+- `ITS_CCTV_API_URL` 값이 올바른지
+- 백엔드 서버가 실행 중인지
+- 브라우저 Network에서 `/api/tunnel/cctv-list` 요청이 정상 응답하는지
